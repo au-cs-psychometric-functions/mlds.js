@@ -2,30 +2,157 @@ import warnings
 import inspect
 import pandas as pd
 import numpy as np
+import scipy.stats
 from scipy import special
-import statsmodels.api as sm
 import statsmodels.formula.api as smf
 
 FLOAT_EPS = np.finfo(float).eps
 
-class Binomial():
-    links = [
-        sm.families.links.logit,
-        sm.families.links.probit,
-        sm.families.links.cauchy,
-        sm.families.links.log,
-        sm.families.links.cloglog,
-        sm.families.links.identity
-    ]
+class Link(object):
+    def __call__(self, p):
+        return NotImplementedError
 
-    safe_links = [
-        sm.families.links.Logit,
-        sm.families.links.CDFLink
-    ]
+    def inverse(self, z):
+        return NotImplementedError
+
+    def deriv(self, p):
+        return NotImplementedError
+
+    def deriv2(self, p):
+        from statsmodels.tools.numdiff import approx_fprime_cs
+        # TODO: workaround proplem with numdiff for 1d
+        return np.diag(approx_fprime_cs(p, self.deriv))
+
+    def inverse_deriv(self, z):
+        return 1 / self.deriv(self.inverse(z))
+
+    def inverse_deriv2(self, z):
+        iz = self.inverse(z)
+        return -self.deriv2(iz) / self.deriv(iz)**3
+
+class Logit(Link):
+    def _clean(self, p):
+        return np.clip(p, FLOAT_EPS, 1. - FLOAT_EPS)
+
+    def __call__(self, p):
+        p = self._clean(p)
+        return np.log(p / (1. - p))
+
+    def inverse(self, z):
+        z = np.asarray(z)
+        t = np.exp(-z)
+        return 1. / (1. + t)
+
+    def deriv(self, p):
+        p = self._clean(p)
+        return 1. / (p * (1 - p))
+
+    def inverse_deriv(self, z):
+        t = np.exp(z)
+        return t/(1 + t)**2
+
+    def deriv2(self, p):
+        v = p * (1 - p)
+        return (2*p - 1) / v**2
+
+class logit(Logit):
+    pass
+
+class CDFLink(Logit):
+    def __init__(self, dbn=scipy.stats.norm):
+        self.dbn = dbn
+
+    def __call__(self, p):
+        p = self._clean(p)
+        return self.dbn.ppf(p)
+
+    def inverse(self, z):
+        return self.dbn.cdf(z)
+
+    def deriv(self, p):
+        p = self._clean(p)
+        return 1. / self.dbn.pdf(self.dbn.ppf(p))
+
+    def deriv2(self, p):
+        from statsmodels.tools.numdiff import approx_fprime
+        p = np.atleast_1d(p)
+        # Note: special function for norm.ppf does not support complex
+        return np.diag(approx_fprime(p, self.deriv, centered=True))
+
+    def inverse_deriv(self, z):
+        return 1/self.deriv(self.inverse(z))
+
+class probit(CDFLink):
+    pass
+
+class cauchy(CDFLink):
+    def __init__(self):
+        super(cauchy, self).__init__(dbn=scipy.stats.cauchy)
+
+    def deriv2(self, p):
+        a = np.pi * (p - 0.5)
+        d2 = 2 * np.pi**2 * np.sin(a) / np.cos(a)**3
+        return d2
+
+class Log(Link):
+    def _clean(self, x):
+        return np.clip(x, FLOAT_EPS, np.inf)
+
+    def __call__(self, p, **extra):
+        x = self._clean(p)
+        return np.log(x)
+
+    def inverse(self, z):
+        return np.exp(z)
+
+    def deriv(self, p):
+        p = self._clean(p)
+        return 1. / p
+
+    def deriv2(self, p):
+        p = self._clean(p)
+        return -1. / p**2
+
+    def inverse_deriv(self, z):
+        return np.exp(z)
+
+
+class log(Log):
+    pass
+
+class CLogLog(Logit):
+    def __call__(self, p):
+        p = self._clean(p)
+        return np.log(-np.log(1 - p))
+
+    def inverse(self, z):
+        return 1 - np.exp(-np.exp(z))
+
+    def deriv(self, p):
+        p = self._clean(p)
+        return 1. / ((p - 1) * (np.log(1 - p)))
+
+    def deriv2(self, p):
+        p = self._clean(p)
+        fl = np.log(1 - p)
+        d2 = -1 / ((1 - p)**2 * fl)
+        d2 *= 1 + 1 / fl
+        return d2
+
+    def inverse_deriv(self, z):
+        return np.exp(z - np.exp(z))
+
+class cloglog(CLogLog):
+    pass
+
+class Binomial():
+    links = [logit, probit, cauchy, log, cloglog]
+
+    safe_links = [Logit, CDFLink]
 
     def _setlink(self, link):
         self._link = link
-        if not isinstance(link, sm.families.links.Link):
+        if not isinstance(link, Link):
             raise TypeError("The input should be a valid Link object.")
         if hasattr(self, "links"):
             validlink = max([isinstance(link, _) for _ in self.links])
@@ -60,8 +187,6 @@ class Binomial():
         return (y + .5)/2
 
     def initialize(self, endog, freq_weights):
-        # if not np.all(np.asarray(freq_weights) == 1):
-        #     self.variance = V.Binomial(n=freq_weights)
         if endog.ndim > 1 and endog.shape[1] > 2:
             raise ValueError('endog has more than 2 columns. The Binomial '
                              'link supports either a single response variable '
@@ -130,7 +255,7 @@ class Binomial():
 
 def mlds(filename):
     data = pd.read_table(filename, sep='\t')
-    res = smf.glm('resp ~ S2 + S3 + S4 + S5 + S6 + S7 + S8 + S9 + S10 + S10 + S11 - 1', family=Binomial(sm.families.links.probit()), data=data).fit()
+    res = smf.glm('resp ~ S2 + S3 + S4 + S5 + S6 + S7 + S8 + S9 + S10 + S10 + S11 - 1', family=Binomial(probit()), data=data).fit()
     print(res.summary())
 
 if __name__ == '__main__':
