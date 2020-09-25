@@ -1,4 +1,5 @@
 MLDS/
+node_modules/
 stats/
 .idea/
 .vscode/
