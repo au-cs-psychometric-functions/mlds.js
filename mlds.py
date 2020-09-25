@@ -1,15 +1,8 @@
-import warnings
-import inspect
 import pandas as pd
 import numpy as np
 import scipy.stats
 from scipy import special
-import statsmodels.formula.api as smf
 from statsmodels.tools.decorators import (cache_readonly, cached_data, cached_value)
-from statsmodels.graphics._regressionplots_doc import (
-    _plot_added_variable_doc,
-    _plot_partial_residuals_doc,
-    _plot_ceres_residuals_doc)
 from statsmodels.base.data import handle_data
 import statsmodels.regression._tools as reg_tools
 import statsmodels.regression.linear_model as lm
@@ -196,16 +189,7 @@ class Binomial():
             link = logit()
         self.n = 1
 
-        if inspect.isclass(link):
-            warnmssg = "Calling Family(..) with a link class as argument "
-            warnmssg += "is deprecated.\n"
-            warnmssg += "Use an instance of a link class instead."
-            lvl = 2 if type(self) is Family else 3
-            warnings.warn(warnmssg,
-                          category=DeprecationWarning, stacklevel=lvl)
-            self.link = link()
-        else:
-            self.link = link
+        self.link = link
         self.variance = BinomialVariance(n=self.n)
 
     def starting_mu(self, y):
@@ -288,15 +272,6 @@ class GLM():
     def __init__(self, endog, exog, family=None, offset=None,
                  exposure=None, freq_weights=None, var_weights=None,
                  missing='none', **kwargs):
-
-        if (family is not None) and not isinstance(family.link,
-                                                   tuple(family.safe_links)):
-
-            warnings.warn((f"The {type(family.link).__name__} link function "
-                           "does not respect the domain of the "
-                           f"{type(family).__name__} family."),
-                          DomainWarning)
-
         if exposure is not None:
             exposure = np.log(exposure)
         if offset is not None:  # this should probably be done upstream
@@ -378,125 +353,6 @@ class GLM():
             self.wnobs = self.exog.shape[0]
             self.df_resid = self.exog.shape[0] - self.df_model - 1
 
-    def _fit_zeros(self, keep_index=None, start_params=None,
-                   return_auxiliary=False, k_params=None, **fit_kwds):
-        # we need to append index of extra params to keep_index as in
-        # NegativeBinomial
-        if hasattr(self, 'k_extra') and self.k_extra > 0:
-            # we cannot change the original, TODO: should we add keep_index_params?
-            keep_index = np.array(keep_index, copy=True)
-            k = self.exog.shape[1]
-            extra_index = np.arange(k, k + self.k_extra)
-            keep_index_p = np.concatenate((keep_index, extra_index))
-        else:
-            keep_index_p = keep_index
-
-        # not all models support start_params, drop if None, hide them in fit_kwds
-        if start_params is not None:
-            fit_kwds['start_params'] = start_params[keep_index_p]
-            k_params = len(start_params)
-            # ignore k_params in this case, or verify consisteny?
-
-        # build auxiliary model and fit
-        init_kwds = self._get_init_kwds()
-        mod_constr = self.__class__(self.endog, self.exog[:, keep_index],
-                                    **init_kwds)
-        res_constr = mod_constr.fit(**fit_kwds)
-        # switch name, only need keep_index for params below
-        keep_index = keep_index_p
-
-        if k_params is None:
-            k_params = self.exog.shape[1]
-            k_params += getattr(self, 'k_extra', 0)
-
-        params_full = np.zeros(k_params)
-        params_full[keep_index] = res_constr.params
-
-        # create dummy results Instance, TODO: wire up properly
-        # TODO: this could be moved into separate private method if needed
-        # discrete L1 fit_regularized doens't reestimate AFAICS
-        # RLM does not have method, disp nor warn_convergence keywords
-        # OLS, WLS swallows extra kwds with **kwargs, but does not have method='nm'
-        try:
-            # Note: addding full_output=False causes exceptions
-            res = self.fit(maxiter=0, disp=0, method='nm', skip_hessian=True,
-                           warn_convergence=False, start_params=params_full)
-            # we get a wrapper back
-        except (TypeError, ValueError):
-            res = self.fit()
-
-        # Warning: make sure we are not just changing the wrapper instead of
-        # results #2400
-        # TODO: do we need to change res._results.scale in some models?
-        if hasattr(res_constr.model, 'scale'):
-            # Note: res.model is self
-            # GLM problem, see #2399,
-            # TODO: remove from model if not needed anymore
-            res.model.scale = res._results.scale = res_constr.model.scale
-
-        if hasattr(res_constr, 'mle_retvals'):
-            res._results.mle_retvals = res_constr.mle_retvals
-            # not available for not scipy optimization, e.g. glm irls
-            # TODO: what retvals should be required?
-            # res.mle_retvals['fcall'] = res_constr.mle_retvals.get('fcall', np.nan)
-            # res.mle_retvals['iterations'] = res_constr.mle_retvals.get(
-            #                                                 'iterations', np.nan)
-            # res.mle_retvals['converged'] = res_constr.mle_retvals['converged']
-        # overwrite all mle_settings
-        if hasattr(res_constr, 'mle_settings'):
-            res._results.mle_settings = res_constr.mle_settings
-
-        res._results.params = params_full
-        if (not hasattr(res._results, 'normalized_cov_params') or
-                res._results.normalized_cov_params is None):
-            res._results.normalized_cov_params = np.zeros((k_params, k_params))
-        else:
-            res._results.normalized_cov_params[...] = 0
-
-        # fancy indexing requires integer array
-        keep_index = np.array(keep_index)
-        res._results.normalized_cov_params[keep_index[:, None], keep_index] = \
-            res_constr.normalized_cov_params
-        k_constr = res_constr.df_resid - res._results.df_resid
-        if hasattr(res_constr, 'cov_params_default'):
-            res._results.cov_params_default = np.zeros((k_params, k_params))
-            res._results.cov_params_default[keep_index[:, None], keep_index] = \
-                res_constr.cov_params_default
-        if hasattr(res_constr, 'cov_type'):
-            res._results.cov_type = res_constr.cov_type
-            res._results.cov_kwds = res_constr.cov_kwds
-
-        res._results.keep_index = keep_index
-        res._results.df_resid = res_constr.df_resid
-        res._results.df_model = res_constr.df_model
-
-        res._results.k_constr = k_constr
-        res._results.results_constrained = res_constr
-
-        # special temporary workaround for RLM
-        # need to be able to override robust covariances
-        if hasattr(res.model, 'M'):
-            del res._results._cache['resid']
-            del res._results._cache['fittedvalues']
-            del res._results._cache['sresid']
-            cov = res._results._cache['bcov_scaled']
-            # inplace adjustment
-            cov[...] = 0
-            cov[keep_index[:, None], keep_index] = res_constr.bcov_scaled
-            res._results.cov_params_default = cov
-
-        return res
-
-    def _fit_collinear(self, atol=1e-14, rtol=1e-13, **kwds):
-        x = self.exog
-        tol = atol + rtol * x.var(0)
-        r = np.linalg.qr(x, mode='r')
-        mask = np.abs(r.diagonal()) < np.sqrt(tol)
-        # TODO add to results instance
-        # idx_collinear = np.where(mask)[0]
-        idx_keep = np.where(~mask)[0]
-        return self._fit_zeros(keep_index=idx_keep, **kwds)
-
     def _get_init_kwds(self):
         kwds = dict(((key, getattr(self, key, None))
                      for key in self._init_keys))
@@ -533,7 +389,7 @@ class GLM():
         self.family = family
 
         if exposure is not None:
-            if not isinstance(self.family.link, families.links.Log):
+            if not isinstance(self.family.link, Log):
                 raise ValueError("exposure can only be used with the log "
                                  "link function")
             elif exposure.shape[0] != endog.shape[0]:
@@ -595,140 +451,6 @@ class GLM():
                                   self.freq_weights, scale)
         return llf
 
-    def score_obs(self, params, scale=None):
-        scale = float_like(scale, "scale", optional=True)
-        score_factor = self.score_factor(params, scale=scale)
-        return score_factor[:, None] * self.exog
-
-    def score(self, params, scale=None):
-        scale = float_like(scale, "scale", optional=True)
-        score_factor = self.score_factor(params, scale=scale)
-        return np.dot(score_factor, self.exog)
-
-    def score_factor(self, params, scale=None):
-        scale = float_like(scale, "scale", optional=True)
-        mu = self.predict(params)
-        if scale is None:
-            scale = self.estimate_scale(mu)
-
-        score_factor = (self.endog - mu) / self.family.link.deriv(mu)
-        score_factor /= self.family.variance(mu)
-        score_factor *= self.iweights * self.n_trials
-
-        if not scale == 1:
-            score_factor /= scale
-
-        return score_factor
-
-    def hessian_factor(self, params, scale=None, observed=True):
-        # calculating eim_factor
-        mu = self.predict(params)
-        if scale is None:
-            scale = self.estimate_scale(mu)
-
-        eim_factor = 1 / (self.family.link.deriv(mu)**2 *
-                          self.family.variance(mu))
-        eim_factor *= self.iweights * self.n_trials
-
-        if not observed:
-            if not scale == 1:
-                eim_factor /= scale
-            return eim_factor
-
-        # calculating oim_factor, eim_factor is with scale=1
-
-        score_factor = self.score_factor(params, scale=1.)
-        if eim_factor.ndim > 1 or score_factor.ndim > 1:
-            raise RuntimeError('something wrong')
-
-        tmp = self.family.variance(mu) * self.family.link.deriv2(mu)
-        tmp += self.family.variance.deriv(mu) * self.family.link.deriv(mu)
-
-        tmp = score_factor * tmp
-        # correct for duplicatee iweights in oim_factor and score_factor
-        tmp /= self.iweights * self.n_trials
-        oim_factor = eim_factor * (1 + tmp)
-
-        if tmp.ndim > 1:
-            raise RuntimeError('something wrong')
-
-        if not scale == 1:
-            oim_factor /= scale
-
-        return oim_factor
-
-    def hessian(self, params, scale=None, observed=None):
-        if observed is None:
-            if getattr(self, '_optim_hessian', None) == 'eim':
-                observed = False
-            else:
-                observed = True
-        scale = float_like(scale, "scale", optional=True)
-        tmp = getattr(self, '_tmp_like_exog', np.empty_like(self.exog, dtype=float))
-
-        factor = self.hessian_factor(params, scale=scale, observed=observed)
-        np.multiply(self.exog.T, factor, out=tmp.T)
-        return -tmp.T.dot(self.exog)
-
-    def information(self, params, scale=None):
-        """
-        Fisher information matrix.
-        """
-        scale = float_like(scale, "scale", optional=True)
-        return self.hessian(params, scale=scale, observed=False)
-
-    def _deriv_mean_dparams(self, params):
-        lin_pred = self.predict(params, linear=True)
-        idl = self.family.link.inverse_deriv(lin_pred)
-        dmat = self.exog * idl[:, None]
-        return dmat
-
-    def _deriv_score_obs_dendog(self, params, scale=None):
-        scale = float_like(scale, "scale", optional=True)
-        mu = self.predict(params)
-        if scale is None:
-            scale = self.estimate_scale(mu)
-
-        score_factor = 1 / self.family.link.deriv(mu)
-        score_factor /= self.family.variance(mu)
-        score_factor *= self.iweights * self.n_trials
-
-        if not scale == 1:
-            score_factor /= scale
-
-        return score_factor[:, None] * self.exog
-
-    def score_test(self, params_constrained, k_constraints=None,
-                   exog_extra=None, observed=True):
-        if exog_extra is None:
-            if k_constraints is None:
-                raise ValueError('if exog_extra is None, then k_constraints'
-                                 'needs to be given')
-
-            score = self.score(params_constrained)
-            hessian = self.hessian(params_constrained, observed=observed)
-
-        else:
-            # exog_extra = np.asarray(exog_extra)
-            if k_constraints is None:
-                k_constraints = 0
-
-            ex = np.column_stack((self.exog, exog_extra))
-            k_constraints += ex.shape[1] - self.exog.shape[1]
-
-            score_factor = self.score_factor(params_constrained)
-            score = (score_factor[:, None] * ex).sum(0)
-            hessian_factor = self.hessian_factor(params_constrained,
-                                                 observed=observed)
-            hessian = -np.dot(ex.T * hessian_factor, ex)
-
-        from scipy import stats
-        # TODO check sign, why minus?
-        chi2stat = -score.dot(np.linalg.solve(hessian, score[:, None]))
-        pval = stats.chi2.sf(chi2stat, k_constraints)
-        # return a stats results instance instead?  Contrast?
-        return chi2stat, pval, k_constraints
-
     def _update_history(self, tmp_result, mu, history):
         history['params'].append(tmp_result.params)
         history['deviance'].append(self.family.deviance(self.endog, mu,
@@ -765,21 +487,6 @@ class GLM():
         resid = np.power(self.endog - mu, 2) * self.iweights
         return np.sum(resid / self.family.variance(mu)) / self.df_resid
 
-    def estimate_tweedie_power(self, mu, method='brentq', low=1.01, high=5.):
-        if method == 'brentq':
-            from scipy.optimize import brentq
-
-            def psi_p(power, mu):
-                scale = ((self.iweights * (self.endog - mu) ** 2 /
-                          (mu ** power)).sum() / self.df_resid)
-                return (np.sum(self.iweights * ((self.endog - mu) ** 2 /
-                               (scale * (mu ** power)) - 1) *
-                               np.log(mu)) / self.freq_weights.sum())
-            power = brentq(psi_p, low, high, args=(mu))
-        else:
-            raise NotImplementedError('Only brentq can currently be used')
-        return power
-
     def predict(self, params, exog=None, exposure=None, offset=None,
                 linear=False):
         # Use fit offset if appropriate
@@ -811,30 +518,6 @@ class GLM():
         else:
             return self.family.fitted(linpred)
 
-    def get_distribution(self, params, scale=1., exog=None, exposure=None,
-                         offset=None):
-        scale = float_like(scale, "scale", optional=True)
-        fit = self.predict(params, exog, exposure, offset, linear=False)
-
-        import scipy.stats.distributions as dist
-
-        # if isinstance(self.family, families.Gaussian):
-        #     return dist.norm(loc=fit, scale=np.sqrt(scale))
-
-        if isinstance(self.family, Binomial):
-            return dist.binom(n=1, p=fit)
-
-        # elif isinstance(self.family, families.Poisson):
-        #     return dist.poisson(mu=fit)
-
-        # elif isinstance(self.family, families.Gamma):
-        #     alpha = fit / float(scale)
-        #     return dist.gamma(alpha, scale=scale)
-
-        else:
-            raise ValueError("get_distribution not implemented for %s" %
-                             self.family.name)
-
     def _setup_binomial(self):
         # this checks what kind of data is given for Binomial.
         # family will need a reference to endog if this is to be removed from
@@ -846,7 +529,7 @@ class GLM():
             self.n_trials = tmp[1]
             self._init_keys.append('n_trials')
 
-    def fit(self, start_params=None, maxiter=100, method='IRLS', tol=1e-8,
+    def fit(self, start_params=None, maxiter=100, tol=1e-8,
             scale=None, cov_type='nonrobust', cov_kwds=None, use_t=None,
             full_output=True, disp=False, max_start_irls=3, **kwargs):
         if isinstance(scale, str):
@@ -865,96 +548,6 @@ class GLM():
                 )
         self.scaletype = scale
 
-        if method.lower() == "irls":
-            if cov_type.lower() == 'eim':
-                cov_type = 'nonrobust'
-            return self._fit_irls(start_params=start_params, maxiter=maxiter,
-                                  tol=tol, scale=scale, cov_type=cov_type,
-                                  cov_kwds=cov_kwds, use_t=use_t, **kwargs)
-        else:
-            self._optim_hessian = kwargs.get('optim_hessian')
-            self._tmp_like_exog = np.empty_like(self.exog, dtype=float)
-            fit_ = self._fit_gradient(start_params=start_params,
-                                      method=method,
-                                      maxiter=maxiter,
-                                      tol=tol, scale=scale,
-                                      full_output=full_output,
-                                      disp=disp, cov_type=cov_type,
-                                      cov_kwds=cov_kwds, use_t=use_t,
-                                      max_start_irls=max_start_irls,
-                                      **kwargs)
-            del self._optim_hessian
-            del self._tmp_like_exog
-            return fit_
-
-    def _fit_gradient(self, start_params=None, method="newton",
-                      maxiter=100, tol=1e-8, full_output=True,
-                      disp=True, scale=None, cov_type='nonrobust',
-                      cov_kwds=None, use_t=None, max_start_irls=3,
-                      **kwargs):
-        # fix scale during optimization, see #4616
-        scaletype = self.scaletype
-        self.scaletype = 1.
-
-        if (max_start_irls > 0) and (start_params is None):
-            irls_rslt = self._fit_irls(start_params=start_params,
-                                       maxiter=max_start_irls,
-                                       tol=tol, scale=1., cov_type='nonrobust',
-                                       cov_kwds=None, use_t=None,
-                                       **kwargs)
-            start_params = irls_rslt.params
-            del irls_rslt
-
-        rslt = super(GLM, self).fit(start_params=start_params, tol=tol,
-                                    maxiter=maxiter, full_output=full_output,
-                                    method=method, disp=disp, **kwargs)
-
-        # reset scaletype to original
-        self.scaletype = scaletype
-
-        mu = self.predict(rslt.params)
-        scale = self.estimate_scale(mu)
-
-        if rslt.normalized_cov_params is None:
-            cov_p = None
-        else:
-            cov_p = rslt.normalized_cov_params / scale
-
-        if cov_type.lower() == 'eim':
-            oim = False
-            cov_type = 'nonrobust'
-        else:
-            oim = True
-
-        try:
-            cov_p = np.linalg.inv(-self.hessian(rslt.params, observed=oim)) / scale
-        except LinAlgError:
-            warnings.warn('Inverting hessian failed, no bse or cov_params '
-                          'available', HessianInversionWarning)
-            cov_p = None
-
-        results_class = getattr(self, '_results_class', GLMResults)
-        results_class_wrapper = getattr(self, '_results_class_wrapper', GLMResultsWrapper)
-        glm_results = results_class(self, rslt.params,
-                                    cov_p,
-                                    scale,
-                                    cov_type=cov_type, cov_kwds=cov_kwds,
-                                    use_t=use_t)
-
-        # TODO: iteration count is not always available
-        history = {'iteration': 0}
-        if full_output:
-            glm_results.mle_retvals = rslt.mle_retvals
-            if 'iterations' in rslt.mle_retvals:
-                history['iteration'] = rslt.mle_retvals['iterations']
-        glm_results.method = method
-        glm_results.fit_history = history
-
-        return results_class_wrapper(glm_results)
-
-    def _fit_irls(self, start_params=None, maxiter=100, tol=1e-8,
-                  scale=None, cov_type='nonrobust', cov_kwds=None,
-                  use_t=None, **kwargs):
         attach_wls = kwargs.pop('attach_wls', False)
         atol = kwargs.get('atol')
         rtol = kwargs.get('rtol', 0.)
@@ -1036,96 +629,6 @@ class GLM():
         glm_results.converged = converged
         return GLMResultsWrapper(glm_results)
 
-    def fit_regularized(self, method="elastic_net", alpha=0.,
-                        start_params=None, refit=False,
-                        opt_method="bfgs", **kwargs):
-        if kwargs.get("L1_wt", 1) == 0:
-            return self._fit_ridge(alpha, start_params, opt_method)
-
-        from statsmodels.base.elastic_net import fit_elasticnet
-
-        if method != "elastic_net":
-            raise ValueError("method for fit_regularied must be elastic_net")
-
-        defaults = {"maxiter": 50, "L1_wt": 1, "cnvrg_tol": 1e-10,
-                    "zero_tol": 1e-10}
-        defaults.update(kwargs)
-
-        result = fit_elasticnet(self, method=method,
-                                alpha=alpha,
-                                start_params=start_params,
-                                refit=refit,
-                                **defaults)
-
-        self.mu = self.predict(result.params)
-        self.scale = self.estimate_scale(self.mu)
-
-        if not result.converged:
-            warnings.warn("Elastic net fitting did not converge")
-
-        return result
-
-    def _fit_ridge(self, alpha, start_params, method):
-
-        if start_params is None:
-            start_params = np.zeros(self.exog.shape[1])
-
-        def fun(x):
-            return -(self.loglike(x) / self.nobs - np.sum(alpha * x**2) / 2)
-
-        def grad(x):
-            return -(self.score(x) / self.nobs - alpha * x)
-
-        from scipy.optimize import minimize
-        from statsmodels.base.elastic_net import (RegularizedResults,
-            RegularizedResultsWrapper)
-
-        mr = minimize(fun, start_params, jac=grad, method=method)
-        params = mr.x
-
-        if not mr.success:
-            import warnings
-            ngrad = np.sqrt(np.sum(mr.jac**2))
-            msg = "GLM ridge optimization may have failed, |grad|=%f" % ngrad
-            warnings.warn(msg)
-
-        results = RegularizedResults(self, params)
-        results = RegularizedResultsWrapper(results)
-
-        return results
-
-    def fit_constrained(self, constraints, start_params=None, **fit_kwds):
-        from patsy import DesignInfo
-        from statsmodels.base._constraints import (fit_constrained,
-                                                   LinearConstraints)
-
-        # same pattern as in base.LikelihoodModel.t_test
-        lc = DesignInfo(self.exog_names).linear_constraint(constraints)
-        R, q = lc.coefs, lc.constants
-
-        # TODO: add start_params option, need access to tranformation
-        #       fit_constrained needs to do the transformation
-        params, cov, res_constr = fit_constrained(self, R, q,
-                                                  start_params=start_params,
-                                                  fit_kwds=fit_kwds)
-        # create dummy results Instance, TODO: wire up properly
-        res = self.fit(start_params=params, maxiter=0)  # we get a wrapper back
-        res._results.params = params
-        res._results.cov_params_default = cov
-        cov_type = fit_kwds.get('cov_type', 'nonrobust')
-        if cov_type != 'nonrobust':
-            res._results.normalized_cov_params = cov / res_constr.scale
-        else:
-            res._results.normalized_cov_params = None
-        res._results.scale = res_constr.scale
-        k_constr = len(q)
-        res._results.df_resid += k_constr
-        res._results.df_model -= k_constr
-        res._results.constraints = LinearConstraints.from_patsy(lc)
-        res._results.k_constr = k_constr
-        res._results.results_constrained = res_constr
-        return res
-
 class PredictionResults(object):
     def __init__(self, predicted_mean, var_pred_mean, var_resid=None,
                  df=None, dist=None, row_labels=None, linpred=None, link=None):
@@ -1160,20 +663,6 @@ class PredictionResults(object):
     @property
     def tvalues(self):
         return self.predicted_mean / self.se_mean
-
-    def t_test(self, value=0, alternative='two-sided'):
-        # assumes symmetric distribution
-        stat = (self.predicted_mean - value) / self.se_mean
-
-        if alternative in ['two-sided', '2-sided', '2s']:
-            pvalue = self.dist.sf(np.abs(stat), *self.dist_args)*2
-        elif alternative in ['larger', 'l']:
-            pvalue = self.dist.sf(stat, *self.dist_args)
-        elif alternative in ['smaller', 's']:
-            pvalue = self.dist.cdf(stat, *self.dist_args)
-        else:
-            raise ValueError('invalid alternative')
-        return stat, pvalue
 
     def conf_int(self, method='endpoint', alpha=0.05, **kwds):
         tmp = np.linspace(0, 1, 6)
@@ -1366,20 +855,6 @@ class GLMResults():
         else:
             self.use_t = use_t
 
-        # temporary warning
-        ct = (cov_type == 'nonrobust') or (cov_type.upper().startswith('HC'))
-        if self.model._has_freq_weights and not ct:
-            import warnings
-            from statsmodels.tools.sm_exceptions import SpecificationWarning
-            warnings.warn('cov_type not fully supported with freq_weights',
-                          SpecificationWarning)
-
-        if self.model._has_var_weights and not ct:
-            import warnings
-            from statsmodels.tools.sm_exceptions import SpecificationWarning
-            warnings.warn('cov_type not fully supported with var_weights',
-                          SpecificationWarning)
-
         if cov_type == 'nonrobust':
             self.cov_type = 'nonrobust'
             self.cov_kwds = {'description': 'Standard Errors assume that the' +
@@ -1429,9 +904,7 @@ class GLMResults():
                        '{0}'.format(str(str(exc))))
                 raise exc.__class__(msg)
             if orig_exog_len > len(exog) and not is_dict:
-                if exog_index is None:
-                    warnings.warn('nan values have been dropped', ValueWarning)
-                else:
+                if exog_index:
                     exog = exog.reindex(exog_index)
             exog_index = exog.index
 
@@ -1494,26 +967,20 @@ class GLMResults():
             bse_ = np.empty(len(self.params))
             bse_[:] = np.nan
         else:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", RuntimeWarning)
-                bse_ = np.sqrt(np.diag(self.cov_params()))
+            bse_ = np.sqrt(np.diag(self.cov_params()))
         return bse_
 
     @cached_value
     def tvalues(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            return self.params / self.bse
+        return self.params / self.bse
 
     @cached_value
     def pvalues(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            if self.use_t:
-                df_resid = getattr(self, 'df_resid_inference', self.df_resid)
-                return scipy.stats.t.sf(np.abs(self.tvalues), df_resid) * 2
-            else:
-                return scipy.stats.norm.sf(np.abs(self.tvalues)) * 2
+        if self.use_t:
+            df_resid = getattr(self, 'df_resid_inference', self.df_resid)
+            return scipy.stats.t.sf(np.abs(self.tvalues), df_resid) * 2
+        else:
+            return scipy.stats.norm.sf(np.abs(self.tvalues)) * 2
 
     def cov_params(self, r_matrix=None, column=None, scale=None, cov_p=None,
                    other=None):
@@ -1559,229 +1026,6 @@ class GLMResults():
             return tmp
         else:  # if r_matrix is None and column is None:
             return cov_p
-
-    # TODO: make sure this works as needed for GLMs
-    def t_test(self, r_matrix, cov_p=None, scale=None, use_t=None):
-        if scale is not None:
-            warnings.warn('scale is has no effect and is deprecated. It will'
-                          'be removed in the next version.',
-                          DeprecationWarning)
-
-        from patsy import DesignInfo
-        names = self.model.data.cov_names
-        LC = DesignInfo(names).linear_constraint(r_matrix)
-        r_matrix, q_matrix = LC.coefs, LC.constants
-        num_ttests = r_matrix.shape[0]
-        num_params = r_matrix.shape[1]
-
-        if (cov_p is None and self.normalized_cov_params is None and
-                not hasattr(self, 'cov_params_default')):
-            raise ValueError('Need covariance of parameters for computing '
-                             'T statistics')
-        params = self.params.ravel()
-        if num_params != params.shape[0]:
-            raise ValueError('r_matrix and params are not aligned')
-        if q_matrix is None:
-            q_matrix = np.zeros(num_ttests)
-        else:
-            q_matrix = np.asarray(q_matrix)
-            q_matrix = q_matrix.squeeze()
-        if q_matrix.size > 1:
-            if q_matrix.shape[0] != num_ttests:
-                raise ValueError("r_matrix and q_matrix must have the same "
-                                 "number of rows")
-
-        if use_t is None:
-            # switch to use_t false if undefined
-            use_t = (hasattr(self, 'use_t') and self.use_t)
-
-        _effect = np.dot(r_matrix, params)
-
-        # Perform the test
-        if num_ttests > 1:
-            _sd = np.sqrt(np.diag(self.cov_params(
-                r_matrix=r_matrix, cov_p=cov_p)))
-        else:
-            _sd = np.sqrt(self.cov_params(r_matrix=r_matrix, cov_p=cov_p))
-        _t = (_effect - q_matrix) * recipr(_sd)
-
-        df_resid = getattr(self, 'df_resid_inference', self.df_resid)
-
-        if use_t:
-            return ContrastResults(effect=_effect, t=_t, sd=_sd,
-                                   df_denom=df_resid)
-        else:
-            return ContrastResults(effect=_effect, statistic=_t, sd=_sd,
-                                   df_denom=df_resid,
-                                   distribution='norm')
-
-    def f_test(self, r_matrix, cov_p=None, scale=1.0, invcov=None):
-        if scale != 1.0:
-            warnings.warn('scale is has no effect and is deprecated. It will'
-                          'be removed in the next version.',
-                          DeprecationWarning)
-
-        res = self.wald_test(r_matrix, cov_p=cov_p, invcov=invcov, use_f=True)
-        return res
-
-    # TODO: untested for GLMs?
-    def wald_test(self, r_matrix, cov_p=None, scale=1.0, invcov=None,
-                  use_f=None, df_constraints=None):
-        if scale != 1.0:
-            warnings.warn('scale is has no effect and is deprecated. It will'
-                          'be removed in the next version.',
-                          DeprecationWarning)
-
-        if use_f is None:
-            # switch to use_t false if undefined
-            use_f = (hasattr(self, 'use_t') and self.use_t)
-
-        from patsy import DesignInfo
-        names = self.model.data.cov_names
-        params = self.params.ravel()
-        LC = DesignInfo(names).linear_constraint(r_matrix)
-        r_matrix, q_matrix = LC.coefs, LC.constants
-
-        if (self.normalized_cov_params is None and cov_p is None and
-                invcov is None and not hasattr(self, 'cov_params_default')):
-            raise ValueError('need covariance of parameters for computing '
-                             'F statistics')
-
-        cparams = np.dot(r_matrix, params[:, None])
-        J = float(r_matrix.shape[0])  # number of restrictions
-
-        if q_matrix is None:
-            q_matrix = np.zeros(J)
-        else:
-            q_matrix = np.asarray(q_matrix)
-        if q_matrix.ndim == 1:
-            q_matrix = q_matrix[:, None]
-            if q_matrix.shape[0] != J:
-                raise ValueError("r_matrix and q_matrix must have the same "
-                                 "number of rows")
-        Rbq = cparams - q_matrix
-        if invcov is None:
-            cov_p = self.cov_params(r_matrix=r_matrix, cov_p=cov_p)
-            if np.isnan(cov_p).max():
-                raise ValueError("r_matrix performs f_test for using "
-                                 "dimensions that are asymptotically "
-                                 "non-normal")
-            invcov = np.linalg.pinv(cov_p)
-            J_ = np.linalg.matrix_rank(cov_p)
-            if J_ < J:
-                warnings.warn('covariance of constraints does not have full '
-                              'rank. The number of constraints is %d, but '
-                              'rank is %d' % (J, J_), ValueWarning)
-                J = J_
-
-        # TODO streamline computation, we do not need to compute J if given
-        if df_constraints is not None:
-            # let caller override J by df_constraint
-            J = df_constraints
-
-        if (hasattr(self, 'mle_settings') and
-                self.mle_settings['optimizer'] in ['l1', 'l1_cvxopt_cp']):
-            F = nan_dot(nan_dot(Rbq.T, invcov), Rbq)
-        else:
-            F = np.dot(np.dot(Rbq.T, invcov), Rbq)
-
-        df_resid = getattr(self, 'df_resid_inference', self.df_resid)
-        if use_f:
-            F /= J
-            return ContrastResults(F=F, df_denom=df_resid,
-                                   df_num=J) #invcov.shape[0])
-        else:
-            return ContrastResults(chi2=F, df_denom=J, statistic=F,
-                                   distribution='chi2', distargs=(J,))
-
-    def wald_test_terms(self, skip_single=False, extra_constraints=None,
-                        combine_terms=None):
-        # lazy import
-        from collections import defaultdict
-
-        result = self
-        if extra_constraints is None:
-            extra_constraints = []
-        if combine_terms is None:
-            combine_terms = []
-        design_info = getattr(result.model.data, 'design_info', None)
-
-        if design_info is None and extra_constraints is None:
-            raise ValueError('no constraints, nothing to do')
-
-        identity = np.eye(len(result.params))
-        constraints = []
-        combined = defaultdict(list)
-        if design_info is not None:
-            for term in design_info.terms:
-                cols = design_info.slice(term)
-                name = term.name()
-                constraint_matrix = identity[cols]
-
-                # check if in combined
-                for cname in combine_terms:
-                    if cname in name:
-                        combined[cname].append(constraint_matrix)
-
-                k_constraint = constraint_matrix.shape[0]
-                if skip_single:
-                    if k_constraint == 1:
-                        continue
-
-                constraints.append((name, constraint_matrix))
-
-            combined_constraints = []
-            for cname in combine_terms:
-                combined_constraints.append((cname, np.vstack(combined[cname])))
-        else:
-            # check by exog/params names if there is no formula info
-            for col, name in enumerate(result.model.exog_names):
-                constraint_matrix = np.atleast_2d(identity[col])
-
-                # check if in combined
-                for cname in combine_terms:
-                    if cname in name:
-                        combined[cname].append(constraint_matrix)
-
-                if skip_single:
-                    continue
-
-                constraints.append((name, constraint_matrix))
-
-            combined_constraints = []
-            for cname in combine_terms:
-                combined_constraints.append((cname, np.vstack(combined[cname])))
-
-        use_t = result.use_t
-        distribution = ['chi2', 'F'][use_t]
-
-        res_wald = []
-        index = []
-        for name, constraint in constraints + combined_constraints + extra_constraints:
-            wt = result.wald_test(constraint)
-            row = [wt.statistic.item(), wt.pvalue.item(), constraint.shape[0]]
-            if use_t:
-                row.append(wt.df_denom)
-            res_wald.append(row)
-            index.append(name)
-
-        # distribution nerutral names
-        col_names = ['statistic', 'pvalue', 'df_constraint']
-        if use_t:
-            col_names.append('df_denom')
-        # TODO: maybe move DataFrame creation to results class
-        from pandas import DataFrame
-        table = DataFrame(res_wald, index=index, columns=col_names)
-        res = WaldTestResults(None, distribution, None, table=table)
-        # TODO: remove temp again, added for testing
-        res.temp = constraints + combined_constraints + extra_constraints
-        return res
-
-    def t_test_pairwise(self, term_name, method='hs', alpha=0.05,
-                        factor_labels=None):
-        res = t_test_pairwise(self, term_name, method=method, alpha=alpha,
-                              factor_labels=factor_labels)
-        return res
 
     def conf_int(self, alpha=.05, cols=None):
         bse = self.bse
@@ -1835,9 +1079,6 @@ class GLMResults():
 
     @cached_data
     def resid_anscombe(self):
-        import warnings
-        warnings.warn('Anscombe residuals currently unscaled. After the 0.12 '
-                      'release, they will be scaled.', category=FutureWarning)
         return self.family.resid_anscombe(self._endog, self.fittedvalues,
                                           var_weights=self._var_weights,
                                           scale=1.)
@@ -1925,19 +1166,6 @@ class GLMResults():
 
     @property
     def bic(self):
-        if _use_bic_helper.use_bic_llf not in (True, False):
-            warnings.warn(
-                "The bic value is computed using the deviance formula. After "
-                "0.13 this will change to the log-likelihood based formula. "
-                "This change has no impact on the relative rank of models "
-                "compared using BIC. You can directly access the "
-                "log-likelihood version using the `bic_llf` attribute. You "
-                "can suppress this message by calling "
-                "statsmodels.genmod.generalized_linear_model.SET_USE_BIC_LLF "
-                "with True to get the LLF-based version now or False to retain"
-                "the deviance version.",
-                FutureWarning
-            )
         if bool(_use_bic_helper.use_bic_llf):
             return self.bic_llf
 
@@ -1975,28 +1203,6 @@ class GLMResults():
                                       pred_kwds=pred_kwds)
 
         return res
-
-    def get_hat_matrix_diag(self, observed=True):
-        weights = self.model.hessian_factor(self.params, observed=observed)
-        wexog = np.sqrt(weights)[:, None] * self.model.exog
-
-        hd = (wexog * np.linalg.pinv(wexog).T).sum(1)
-        return hd
-
-    def get_influence(self, observed=True):
-        from statsmodels.stats.outliers_influence import GLMInfluence
-
-        weights = self.model.hessian_factor(self.params, observed=observed)
-        weights_sqrt = np.sqrt(weights)
-        wexog = weights_sqrt[:, None] * self.model.exog
-        wendog = weights_sqrt * self.model.endog
-
-        # using get_hat_matrix_diag has duplicated computation
-        hat_matrix_diag = self.get_hat_matrix_diag(observed=observed)
-        infl = GLMInfluence(self, endog=wendog, exog=wexog,
-                         resid=self.resid_pearson,
-                         hat_matrix_diag=hat_matrix_diag)
-        return infl
 
     def remove_data(self):
         # GLM has alias/reference in result instance
@@ -2059,33 +1265,6 @@ class GLMResults():
         self._iweights = None
         self._n_trials = None
 
-    def plot_added_variable(self, focus_exog, resid_type=None,
-                            use_glm_weights=True, fit_kwargs=None,
-                            ax=None):
-
-        from statsmodels.graphics.regressionplots import plot_added_variable
-
-        fig = plot_added_variable(self, focus_exog,
-                                  resid_type=resid_type,
-                                  use_glm_weights=use_glm_weights,
-                                  fit_kwargs=fit_kwargs, ax=ax)
-
-        return fig
-
-    def plot_partial_residuals(self, focus_exog, ax=None):
-
-        from statsmodels.graphics.regressionplots import plot_partial_residuals
-
-        return plot_partial_residuals(self, focus_exog, ax=ax)
-
-    def plot_ceres_residuals(self, focus_exog, frac=0.66, cond_means=None,
-                             ax=None):
-
-        from statsmodels.graphics.regressionplots import plot_ceres_residuals
-
-        return plot_ceres_residuals(self, focus_exog, frac,
-                                    cond_means=cond_means, ax=ax)
-
     def summary(self, yname=None, xname=None, title=None, alpha=.05):
         top_left = [('Dep. Variable:', None),
                     ('Model:', None),
@@ -2124,21 +1303,6 @@ class GLMResults():
         if hasattr(self, 'constraints'):
             smry.add_extra_txt(['Model has been estimated subject to linear '
                                 'equality constraints.'])
-        return smry
-
-    def summary2(self, yname=None, xname=None, title=None, alpha=.05,
-                 float_format="%.4f"):
-        self.method = 'IRLS'
-        from statsmodels.iolib import summary2
-        smry = summary2.Summary()
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", FutureWarning)
-            smry.add_base(results=self, alpha=alpha, float_format=float_format,
-                          xname=xname, yname=yname, title=title)
-        if hasattr(self, 'constraints'):
-            smry.add_text('Model has been estimated subject to linear '
-                          'equality constraints.')
-
         return smry
 
 class GLMResultsWrapper(lm.RegressionResultsWrapper):
