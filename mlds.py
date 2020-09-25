@@ -6,7 +6,6 @@ import scipy.stats
 from scipy import special
 import statsmodels.formula.api as smf
 from statsmodels.tools.decorators import (cache_readonly, cached_data, cached_value)
-from statsmodels.compat.pandas import Appender
 from statsmodels.graphics._regressionplots_doc import (
     _plot_added_variable_doc,
     _plot_partial_residuals_doc,
@@ -2210,7 +2209,6 @@ class GLMResults(LikelihoodModelResults):
             self.df_model+self.df_resid+1
         )
 
-    @Appender(get_prediction_glm.__doc__)
     def get_prediction(self, exog=None, exposure=None, offset=None,
                        transform=True, linear=False,
                        row_labels=None):
@@ -2254,7 +2252,6 @@ class GLMResults(LikelihoodModelResults):
                          hat_matrix_diag=hat_matrix_diag)
         return infl
 
-    @Appender(LikelihoodModelResults.remove_data.__doc__)
     def remove_data(self):
         # GLM has alias/reference in result instance
         self._data_attr.extend([i for i in self.model._data_attr
@@ -2268,7 +2265,6 @@ class GLMResults(LikelihoodModelResults):
         self._iweights = None
         self._n_trials = None
 
-    @Appender(_plot_added_variable_doc % {'extra_params_doc': ''})
     def plot_added_variable(self, focus_exog, resid_type=None,
                             use_glm_weights=True, fit_kwargs=None,
                             ax=None):
@@ -2282,14 +2278,12 @@ class GLMResults(LikelihoodModelResults):
 
         return fig
 
-    @Appender(_plot_partial_residuals_doc % {'extra_params_doc': ''})
     def plot_partial_residuals(self, focus_exog, ax=None):
 
         from statsmodels.graphics.regressionplots import plot_partial_residuals
 
         return plot_partial_residuals(self, focus_exog, ax=ax)
 
-    @Appender(_plot_ceres_residuals_doc % {'extra_params_doc': ''})
     def plot_ceres_residuals(self, focus_exog, frac=0.66, cond_means=None,
                              ax=None):
 
