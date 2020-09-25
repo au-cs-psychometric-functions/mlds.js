@@ -1472,13 +1472,97 @@ def params_transform_univariate(params, cov_params, link=None, transform=None,
 
     return res
 
-class Results(object):
-    def __init__(self, model, params, **kwd):
-        self.__dict__.update(kwd)
-        self.initialize(model, params, **kwd)
+class GLMResults():
+    def __init__(self, model, params, normalized_cov_params, scale,
+                 cov_type='nonrobust', cov_kwds=None, use_t=None, **kwargs):
+        self.__dict__.update(kwargs)
+        self.initialize(model, params, **kwargs)
         self._data_attr = []
         # Variables to clear from cache
         self._data_in_cache = ['fittedvalues', 'resid', 'wresid']
+
+        self.normalized_cov_params = normalized_cov_params
+        self.scale = scale
+        self._use_t = False
+        # robust covariance
+        # We put cov_type in kwargs so subclasses can decide in fit whether to
+        # use this generic implementation
+        if 'use_t' in kwargs:
+            use_t = kwargs['use_t']
+            self.use_t = use_t if use_t is not None else False
+        if 'cov_type' in kwargs:
+            cov_type = kwargs.get('cov_type', 'nonrobust')
+            cov_kwds = kwargs.get('cov_kwds', {})
+
+            if cov_type == 'nonrobust':
+                self.cov_type = 'nonrobust'
+                self.cov_kwds = {'description': 'Standard Errors assume that the ' +
+                                 'covariance matrix of the errors is correctly ' +
+                                 'specified.'}
+            else:
+                from statsmodels.base.covtype import get_robustcov_results
+                if cov_kwds is None:
+                    cov_kwds = {}
+                use_t = self.use_t
+                # TODO: we should not need use_t in get_robustcov_results
+                get_robustcov_results(self, cov_type=cov_type, use_self=True,
+                                      use_t=use_t, **cov_kwds)
+
+        self.family = model.family
+        self._endog = model.endog
+        self.nobs = model.endog.shape[0]
+        self._freq_weights = model.freq_weights
+        self._var_weights = model.var_weights
+        self._iweights = model.iweights
+        if isinstance(self.family, Binomial):
+            self._n_trials = self.model.n_trials
+        else:
+            self._n_trials = 1
+        self.df_resid = model.df_resid
+        self.df_model = model.df_model
+        self._cache = {}
+        # are these intermediate results needed or can we just
+        # call the model's attributes?
+
+        # for remove data and pickle without large arrays
+        self._data_attr.extend(['results_constrained', '_freq_weights',
+                                '_var_weights', '_iweights'])
+        self._data_in_cache.extend(['null', 'mu'])
+        self._data_attr_model = getattr(self, '_data_attr_model', [])
+        self._data_attr_model.append('mu')
+
+        # robust covariance
+        from statsmodels.base.covtype import get_robustcov_results
+        if use_t is None:
+            self.use_t = False    # TODO: class default
+        else:
+            self.use_t = use_t
+
+        # temporary warning
+        ct = (cov_type == 'nonrobust') or (cov_type.upper().startswith('HC'))
+        if self.model._has_freq_weights and not ct:
+            import warnings
+            from statsmodels.tools.sm_exceptions import SpecificationWarning
+            warnings.warn('cov_type not fully supported with freq_weights',
+                          SpecificationWarning)
+
+        if self.model._has_var_weights and not ct:
+            import warnings
+            from statsmodels.tools.sm_exceptions import SpecificationWarning
+            warnings.warn('cov_type not fully supported with var_weights',
+                          SpecificationWarning)
+
+        if cov_type == 'nonrobust':
+            self.cov_type = 'nonrobust'
+            self.cov_kwds = {'description': 'Standard Errors assume that the' +
+                             ' covariance matrix of the errors is correctly ' +
+                             'specified.'}
+
+        else:
+            if cov_kwds is None:
+                cov_kwds = {}
+            get_robustcov_results(self, cov_type=cov_type, use_self=True,
+                                  use_t=use_t, **cov_kwds)
 
     def initialize(self, model, params, **kwargs):
         self.params = params
@@ -1542,43 +1626,6 @@ class Results(object):
         else:
             return predict_results
 
-    def summary(self):
-        raise NotImplementedError
-
-class LikelihoodModelResults(Results):
-    # by default we use normal distribution
-    # can be overwritten by instances or subclasses
-
-    def __init__(self, model, params, normalized_cov_params=None, scale=1.,
-                 **kwargs):
-        super(LikelihoodModelResults, self).__init__(model, params)
-        self.normalized_cov_params = normalized_cov_params
-        self.scale = scale
-        self._use_t = False
-        # robust covariance
-        # We put cov_type in kwargs so subclasses can decide in fit whether to
-        # use this generic implementation
-        if 'use_t' in kwargs:
-            use_t = kwargs['use_t']
-            self.use_t = use_t if use_t is not None else False
-        if 'cov_type' in kwargs:
-            cov_type = kwargs.get('cov_type', 'nonrobust')
-            cov_kwds = kwargs.get('cov_kwds', {})
-
-            if cov_type == 'nonrobust':
-                self.cov_type = 'nonrobust'
-                self.cov_kwds = {'description': 'Standard Errors assume that the ' +
-                                 'covariance matrix of the errors is correctly ' +
-                                 'specified.'}
-            else:
-                from statsmodels.base.covtype import get_robustcov_results
-                if cov_kwds is None:
-                    cov_kwds = {}
-                use_t = self.use_t
-                # TODO: we should not need use_t in get_robustcov_results
-                get_robustcov_results(self, cov_type=cov_type, use_self=True,
-                                      use_t=use_t, **cov_kwds)
-
     def normalized_cov_params(self):
         """See specific model class docstring"""
         raise NotImplementedError
@@ -1609,11 +1656,6 @@ class LikelihoodModelResults(Results):
     @use_t.setter
     def use_t(self, value):
         self._use_t = bool(value)
-
-    @cached_value
-    def llf(self):
-        """Log-likelihood of model"""
-        return self.model.loglike(self.params)
 
     @cached_value
     def bse(self):
@@ -1946,119 +1988,6 @@ class LikelihoodModelResults(Results):
         from statsmodels.iolib.smpickle import load_pickle
         return load_pickle(fname)
 
-    def remove_data(self):
-        cls = self.__class__
-        # Note: we cannot just use `getattr(cls, x)` or `getattr(self, x)`
-        # because of redirection involved with property-like accessors
-        cls_attrs = {}
-        for name in dir(cls):
-            try:
-                attr = object.__getattribute__(cls, name)
-            except AttributeError:
-                pass
-            else:
-                cls_attrs[name] = attr
-        data_attrs = [x for x in cls_attrs
-                      if isinstance(cls_attrs[x], cached_data)]
-        value_attrs = [x for x in cls_attrs
-                       if isinstance(cls_attrs[x], cached_value)]
-        # make sure the cached for value_attrs are evaluated; this needs to
-        # occur _before_ any other attributes are removed.
-        for name in value_attrs:
-            getattr(self, name)
-        for name in data_attrs:
-            self._cache[name] = None
-
-        def wipe(obj, att):
-            # get to last element in attribute path
-            p = att.split('.')
-            att_ = p.pop(-1)
-            try:
-                obj_ = reduce(getattr, [obj] + p)
-                if hasattr(obj_, att_):
-                    setattr(obj_, att_, None)
-            except AttributeError:
-                pass
-
-        model_only = ['model.' + i for i in getattr(self, "_data_attr_model", [])]
-        model_attr = ['model.' + i for i in self.model._data_attr]
-        for att in self._data_attr + model_attr + model_only:
-            if att in data_attrs:
-                # these have been handled above, and trying to call wipe
-                # would raise an Exception anyway, so skip these
-                continue
-            wipe(self, att)
-
-        for key in self._data_in_cache:
-            try:
-                self._cache[key] = None
-            except (AttributeError, KeyError):
-                pass
-
-class GLMResults(LikelihoodModelResults):
-    def __init__(self, model, params, normalized_cov_params, scale,
-                 cov_type='nonrobust', cov_kwds=None, use_t=None):
-        super(GLMResults, self).__init__(
-                model,
-                params,
-                normalized_cov_params=normalized_cov_params,
-                scale=scale)
-        self.family = model.family
-        self._endog = model.endog
-        self.nobs = model.endog.shape[0]
-        self._freq_weights = model.freq_weights
-        self._var_weights = model.var_weights
-        self._iweights = model.iweights
-        if isinstance(self.family, Binomial):
-            self._n_trials = self.model.n_trials
-        else:
-            self._n_trials = 1
-        self.df_resid = model.df_resid
-        self.df_model = model.df_model
-        self._cache = {}
-        # are these intermediate results needed or can we just
-        # call the model's attributes?
-
-        # for remove data and pickle without large arrays
-        self._data_attr.extend(['results_constrained', '_freq_weights',
-                                '_var_weights', '_iweights'])
-        self._data_in_cache.extend(['null', 'mu'])
-        self._data_attr_model = getattr(self, '_data_attr_model', [])
-        self._data_attr_model.append('mu')
-
-        # robust covariance
-        from statsmodels.base.covtype import get_robustcov_results
-        if use_t is None:
-            self.use_t = False    # TODO: class default
-        else:
-            self.use_t = use_t
-
-        # temporary warning
-        ct = (cov_type == 'nonrobust') or (cov_type.upper().startswith('HC'))
-        if self.model._has_freq_weights and not ct:
-            import warnings
-            from statsmodels.tools.sm_exceptions import SpecificationWarning
-            warnings.warn('cov_type not fully supported with freq_weights',
-                          SpecificationWarning)
-
-        if self.model._has_var_weights and not ct:
-            import warnings
-            from statsmodels.tools.sm_exceptions import SpecificationWarning
-            warnings.warn('cov_type not fully supported with var_weights',
-                          SpecificationWarning)
-
-        if cov_type == 'nonrobust':
-            self.cov_type = 'nonrobust'
-            self.cov_kwds = {'description': 'Standard Errors assume that the' +
-                             ' covariance matrix of the errors is correctly ' +
-                             'specified.'}
-
-        else:
-            if cov_kwds is None:
-                cov_kwds = {}
-            get_robustcov_results(self, cov_type=cov_type, use_self=True,
-                                  use_t=use_t, **cov_kwds)
-
     @cached_data
     def resid_response(self):
         return self._n_trials * (self._endog-self.mu)
@@ -2156,17 +2085,6 @@ class GLMResults(LikelihoodModelResults):
     @cached_value
     def llf(self):
         _modelfamily = self.family
-        # if (isinstance(self.family, families.Gaussian) and
-        #         isinstance(self.family.link, Power) and
-        #         (self.family.link.power == 1.)):
-        #     scale = (np.power(self._endog - self.mu, 2) * self._iweights).sum()
-        #     scale /= self.model.wnobs
-        # else:
-        #     scale = self.scale
-        # val = _modelfamily.loglike(self._endog, self.mu,
-        #                            var_weights=self._var_weights,
-        #                            freq_weights=self._freq_weights,
-        #                            scale=scale)
         val = _modelfamily.loglike(self._endog, self.mu,
                                    var_weights=self._var_weights,
                                    freq_weights=self._freq_weights,
@@ -2257,6 +2175,54 @@ class GLMResults(LikelihoodModelResults):
         self._data_attr.extend([i for i in self.model._data_attr
                                 if '_data.' not in i])
         super(self.__class__, self).remove_data()
+
+        cls = self.__class__
+        # Note: we cannot just use `getattr(cls, x)` or `getattr(self, x)`
+        # because of redirection involved with property-like accessors
+        cls_attrs = {}
+        for name in dir(cls):
+            try:
+                attr = object.__getattribute__(cls, name)
+            except AttributeError:
+                pass
+            else:
+                cls_attrs[name] = attr
+        data_attrs = [x for x in cls_attrs
+                      if isinstance(cls_attrs[x], cached_data)]
+        value_attrs = [x for x in cls_attrs
+                       if isinstance(cls_attrs[x], cached_value)]
+        # make sure the cached for value_attrs are evaluated; this needs to
+        # occur _before_ any other attributes are removed.
+        for name in value_attrs:
+            getattr(self, name)
+        for name in data_attrs:
+            self._cache[name] = None
+
+        def wipe(obj, att):
+            # get to last element in attribute path
+            p = att.split('.')
+            att_ = p.pop(-1)
+            try:
+                obj_ = reduce(getattr, [obj] + p)
+                if hasattr(obj_, att_):
+                    setattr(obj_, att_, None)
+            except AttributeError:
+                pass
+
+        model_only = ['model.' + i for i in getattr(self, "_data_attr_model", [])]
+        model_attr = ['model.' + i for i in self.model._data_attr]
+        for att in self._data_attr + model_attr + model_only:
+            if att in data_attrs:
+                # these have been handled above, and trying to call wipe
+                # would raise an Exception anyway, so skip these
+                continue
+            wipe(self, att)
+
+        for key in self._data_in_cache:
+            try:
+                self._cache[key] = None
+            except (AttributeError, KeyError):
+                pass
 
         # TODO: what are these in results?
         self._endog = None
