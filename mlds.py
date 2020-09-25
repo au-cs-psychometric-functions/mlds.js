@@ -279,10 +279,44 @@ class Binomial():
         resid *= np.sqrt(var_weights)
         return resid
 
-class Model(object):
-    _formula_max_endog = 1
+def _check_convergence(criterion, iteration, atol, rtol):
+    return np.allclose(criterion[iteration], criterion[iteration + 1],
+                       atol=atol, rtol=rtol)
 
-    def __init__(self, endog, exog=None, **kwargs):
+class GLM():
+    _formula_max_endog = 2
+
+    def __init__(self, endog, exog, family=None, offset=None,
+                 exposure=None, freq_weights=None, var_weights=None,
+                 missing='none', **kwargs):
+
+        if (family is not None) and not isinstance(family.link,
+                                                   tuple(family.safe_links)):
+
+            warnings.warn((f"The {type(family.link).__name__} link function "
+                           "does not respect the domain of the "
+                           f"{type(family).__name__} family."),
+                          DomainWarning)
+
+        if exposure is not None:
+            exposure = np.log(exposure)
+        if offset is not None:  # this should probably be done upstream
+            offset = np.asarray(offset)
+
+        if freq_weights is not None:
+            freq_weights = np.asarray(freq_weights)
+        if var_weights is not None:
+            var_weights = np.asarray(var_weights)
+
+        self.freq_weights = freq_weights
+        self.var_weights = var_weights
+
+        kwargs['missing'] = missing
+        kwargs['offset'] = offset
+        kwargs['exposure'] = exposure
+        kwargs['freq_weights'] = freq_weights
+        kwargs['var_weights'] = var_weights
+
         missing = kwargs.pop('missing', 'none')
         hasconst = kwargs.pop('hasconst', None)
         self.data = self._handle_data(endog, exog, missing, hasconst,
@@ -300,203 +334,50 @@ class Model(object):
         if hasconst is not None:
             self._init_keys.append('hasconst')
 
-    def _get_init_kwds(self):
-        kwds = dict(((key, getattr(self, key, None))
-                     for key in self._init_keys))
-
-        return kwds
-
-    def _handle_data(self, endog, exog, missing, hasconst, **kwargs):
-        data = handle_data(endog, exog, missing, hasconst, **kwargs)
-        # kwargs arrays could have changed, easier to just attach here
-        for key in kwargs:
-            if key in ['design_info', 'formula']:  # leave attached to data
-                continue
-            # pop so we do not start keeping all these twice or references
-            try:
-                setattr(self, key, data.__dict__.pop(key))
-            except KeyError:  # panel already pops keys in data handling
-                pass
-        return data
-
-    @classmethod
-    def from_formula(cls, formula, data, subset=None, drop_cols=None,
-                     *args, **kwargs):
-        # TODO: provide a docs template for args/kwargs from child models
-        # TODO: subset could use syntax. issue #469.
-        if subset is not None:
-            data = data.loc[subset]
-        eval_env = kwargs.pop('eval_env', None)
-        if eval_env is None:
-            eval_env = 2
-        elif eval_env == -1:
-            from patsy import EvalEnvironment
-            eval_env = EvalEnvironment({})
-        elif isinstance(eval_env, int):
-            eval_env += 1  # we're going down the stack again
-        missing = kwargs.get('missing', 'drop')
-        if missing == 'none':  # with patsy it's drop or raise. let's raise.
-            missing = 'raise'
-
-        tmp = handle_formula_data(data, None, formula, depth=eval_env,
-                                  missing=missing)
-        ((endog, exog), missing_idx, design_info) = tmp
-        max_endog = cls._formula_max_endog
-        if (max_endog is not None and
-                endog.ndim > 1 and endog.shape[1] > max_endog):
-            raise ValueError('endog has evaluated to an array with multiple '
-                             'columns that has shape {0}. This occurs when '
-                             'the variable converted to endog is non-numeric'
-                             ' (e.g., bool or str).'.format(endog.shape))
-        if drop_cols is not None and len(drop_cols) > 0:
-            cols = [x for x in exog.columns if x not in drop_cols]
-            if len(cols) < len(exog.columns):
-                exog = exog[cols]
-                cols = list(design_info.term_names)
-                for col in drop_cols:
-                    try:
-                        cols.remove(col)
-                    except ValueError:
-                        pass  # OK if not present
-                design_info = design_info.subset(cols)
-
-        kwargs.update({'missing_idx': missing_idx,
-                       'missing': missing,
-                       'formula': formula,  # attach formula for unpckling
-                       'design_info': design_info})
-        mod = cls(endog, exog, *args, **kwargs)
-        mod.formula = formula
-
-        # since we got a dataframe, attach the original
-        mod.data.frame = data
-        return mod
-
-    @property
-    def endog_names(self):
-        return self.data.ynames
-
-    @property
-    def exog_names(self):
-        return self.data.xnames
-
-    def fit(self):
-        raise NotImplementedError
-
-    def predict(self, params, exog=None, *args, **kwargs):
-        raise NotImplementedError
-
-class LikelihoodModel(Model):
-    def __init__(self, endog, exog=None, **kwargs):
-        super(LikelihoodModel, self).__init__(endog, exog, **kwargs)
         self.initialize()
 
+        self._check_inputs(family, self.offset, self.exposure, self.endog,
+                           self.freq_weights, self.var_weights)
+        if offset is None:
+            delattr(self, 'offset')
+        if exposure is None:
+            delattr(self, 'exposure')
+
+        self.nobs = self.endog.shape[0]
+
+        # things to remove_data
+        self._data_attr.extend(['weights', 'mu', 'freq_weights',
+                                'var_weights', 'iweights', '_offset_exposure',
+                                'n_trials'])
+        # register kwds for __init__, offset and exposure are added by super
+        self._init_keys.append('family')
+
+        self._setup_binomial()
+        # internal usage for recreating a model
+        if 'n_trials' in kwargs:
+            self.n_trials = kwargs['n_trials']
+
+        # Construct a combined offset/exposure term.  Note that
+        # exposure has already been logged if present.
+        offset_exposure = 0.
+        if hasattr(self, 'offset'):
+            offset_exposure = self.offset
+        if hasattr(self, 'exposure'):
+            offset_exposure = offset_exposure + self.exposure
+        self._offset_exposure = offset_exposure
+
+        self.scaletype = None
+
     def initialize(self):
-        pass
+        self.df_model = np.linalg.matrix_rank(self.exog) - 1
 
-    # TODO: if the intent is to re-initialize the model with new data then this
-    # method needs to take inputs...
-
-    def loglike(self, params):
-        raise NotImplementedError
-
-    def score(self, params):
-        raise NotImplementedError
-
-    def information(self, params):
-        raise NotImplementedError
-
-    def hessian(self, params):
-        raise NotImplementedError
-
-    def fit(self, start_params=None, method='newton', maxiter=100,
-            full_output=True, disp=True, fargs=(), callback=None, retall=False,
-            skip_hessian=False, **kwargs):
-        Hinv = None  # JP error if full_output=0, Hinv not defined
-
-        if start_params is None:
-            if hasattr(self, 'start_params'):
-                start_params = self.start_params
-            elif self.exog is not None:
-                # fails for shape (K,)?
-                start_params = [0] * self.exog.shape[1]
-            else:
-                raise ValueError("If exog is None, then start_params should "
-                                 "be specified")
-
-        nobs = self.endog.shape[0]
-
-        def f(params, *args):
-            return -self.loglike(params, *args) / nobs
-
-        if method == 'newton':
-            # TODO: why are score and hess positive?
-            def score(params, *args):
-                return self.score(params, *args) / nobs
-
-            def hess(params, *args):
-                return self.hessian(params, *args) / nobs
+        if (self.freq_weights is not None) and \
+           (self.freq_weights.shape[0] == self.endog.shape[0]):
+            self.wnobs = self.freq_weights.sum()
+            self.df_resid = self.wnobs - self.df_model - 1
         else:
-            def score(params, *args):
-                return -self.score(params, *args) / nobs
-
-            def hess(params, *args):
-                return -self.hessian(params, *args) / nobs
-
-        warn_convergence = kwargs.pop('warn_convergence', True)
-        optimizer = Optimizer()
-        xopt, retvals, optim_settings = optimizer._fit(f, score, start_params,
-                                                       fargs, kwargs,
-                                                       hessian=hess,
-                                                       method=method,
-                                                       disp=disp,
-                                                       maxiter=maxiter,
-                                                       callback=callback,
-                                                       retall=retall,
-                                                       full_output=full_output)
-
-        # NOTE: this is for fit_regularized and should be generalized
-        cov_params_func = kwargs.setdefault('cov_params_func', None)
-        if cov_params_func:
-            Hinv = cov_params_func(self, xopt, retvals)
-        elif method == 'newton' and full_output:
-            Hinv = np.linalg.inv(-retvals['Hessian']) / nobs
-        elif not skip_hessian:
-            H = -1 * self.hessian(xopt)
-            invertible = False
-            if np.all(np.isfinite(H)):
-                eigvals, eigvecs = np.linalg.eigh(H)
-                if np.min(eigvals) > 0:
-                    invertible = True
-
-            if invertible:
-                Hinv = eigvecs.dot(np.diag(1.0 / eigvals)).dot(eigvecs.T)
-                Hinv = np.asfortranarray((Hinv + Hinv.T) / 2.0)
-            else:
-                warnings.warn('Inverting hessian failed, no bse or cov_params '
-                              'available', HessianInversionWarning)
-                Hinv = None
-
-        if 'cov_type' in kwargs:
-            cov_kwds = kwargs.get('cov_kwds', {})
-            kwds = {'cov_type': kwargs['cov_type'], 'cov_kwds': cov_kwds}
-        else:
-            kwds = {}
-        if 'use_t' in kwargs:
-            kwds['use_t'] = kwargs['use_t']
-        # TODO: add Hessian approximation and change the above if needed
-        mlefit = LikelihoodModelResults(self, xopt, Hinv, scale=1., **kwds)
-
-        # TODO: hardcode scale?
-        mlefit.mle_retvals = retvals
-        if isinstance(retvals, dict):
-            if warn_convergence and not retvals['converged']:
-                from statsmodels.tools.sm_exceptions import ConvergenceWarning
-                warnings.warn("Maximum Likelihood optimization failed to "
-                              "converge. Check mle_retvals",
-                              ConvergenceWarning)
-
-        mlefit.mle_settings = optim_settings
-        return mlefit
+            self.wnobs = self.exog.shape[0]
+            self.df_resid = self.exog.shape[0] - self.df_model - 1
 
     def _fit_zeros(self, keep_index=None, start_params=None,
                    return_auxiliary=False, k_params=None, **fit_kwds):
@@ -617,84 +498,84 @@ class LikelihoodModel(Model):
         idx_keep = np.where(~mask)[0]
         return self._fit_zeros(keep_index=idx_keep, **kwds)
 
-def _check_convergence(criterion, iteration, atol, rtol):
-    return np.allclose(criterion[iteration], criterion[iteration + 1],
-                       atol=atol, rtol=rtol)
+    def _get_init_kwds(self):
+        kwds = dict(((key, getattr(self, key, None))
+                     for key in self._init_keys))
 
-class GLM(LikelihoodModel):
-    _formula_max_endog = 2
+        return kwds
 
-    def __init__(self, endog, exog, family=None, offset=None,
-                 exposure=None, freq_weights=None, var_weights=None,
-                 missing='none', **kwargs):
+    def _handle_data(self, endog, exog, missing, hasconst, **kwargs):
+        data = handle_data(endog, exog, missing, hasconst, **kwargs)
+        # kwargs arrays could have changed, easier to just attach here
+        for key in kwargs:
+            if key in ['design_info', 'formula']:  # leave attached to data
+                continue
+            # pop so we do not start keeping all these twice or references
+            try:
+                setattr(self, key, data.__dict__.pop(key))
+            except KeyError:  # panel already pops keys in data handling
+                pass
+        return data
 
-        if (family is not None) and not isinstance(family.link,
-                                                   tuple(family.safe_links)):
+    @classmethod
+    def from_formula(cls, formula, data, subset=None, drop_cols=None,
+                     *args, **kwargs):
+        # TODO: provide a docs template for args/kwargs from child models
+        # TODO: subset could use syntax. issue #469.
+        if subset is not None:
+            data = data.loc[subset]
+        eval_env = kwargs.pop('eval_env', None)
+        if eval_env is None:
+            eval_env = 2
+        elif eval_env == -1:
+            from patsy import EvalEnvironment
+            eval_env = EvalEnvironment({})
+        elif isinstance(eval_env, int):
+            eval_env += 1  # we're going down the stack again
+        missing = kwargs.get('missing', 'drop')
+        if missing == 'none':  # with patsy it's drop or raise. let's raise.
+            missing = 'raise'
 
-            warnings.warn((f"The {type(family.link).__name__} link function "
-                           "does not respect the domain of the "
-                           f"{type(family).__name__} family."),
-                          DomainWarning)
+        tmp = handle_formula_data(data, None, formula, depth=eval_env,
+                                  missing=missing)
+        ((endog, exog), missing_idx, design_info) = tmp
+        max_endog = cls._formula_max_endog
+        if (max_endog is not None and
+                endog.ndim > 1 and endog.shape[1] > max_endog):
+            raise ValueError('endog has evaluated to an array with multiple '
+                             'columns that has shape {0}. This occurs when '
+                             'the variable converted to endog is non-numeric'
+                             ' (e.g., bool or str).'.format(endog.shape))
+        if drop_cols is not None and len(drop_cols) > 0:
+            cols = [x for x in exog.columns if x not in drop_cols]
+            if len(cols) < len(exog.columns):
+                exog = exog[cols]
+                cols = list(design_info.term_names)
+                for col in drop_cols:
+                    try:
+                        cols.remove(col)
+                    except ValueError:
+                        pass  # OK if not present
+                design_info = design_info.subset(cols)
 
-        if exposure is not None:
-            exposure = np.log(exposure)
-        if offset is not None:  # this should probably be done upstream
-            offset = np.asarray(offset)
+        kwargs.update({'missing_idx': missing_idx,
+                       'missing': missing,
+                       'formula': formula,  # attach formula for unpckling
+                       'design_info': design_info})
+        mod = cls(endog, exog, *args, **kwargs)
+        mod.formula = formula
 
-        if freq_weights is not None:
-            freq_weights = np.asarray(freq_weights)
-        if var_weights is not None:
-            var_weights = np.asarray(var_weights)
+        # since we got a dataframe, attach the original
+        mod.data.frame = data
+        return mod
 
-        self.freq_weights = freq_weights
-        self.var_weights = var_weights
+    @property
+    def endog_names(self):
+        return self.data.ynames
 
-        super(GLM, self).__init__(endog, exog, missing=missing,
-                                  offset=offset, exposure=exposure,
-                                  freq_weights=freq_weights,
-                                  var_weights=var_weights, **kwargs)
-        self._check_inputs(family, self.offset, self.exposure, self.endog,
-                           self.freq_weights, self.var_weights)
-        if offset is None:
-            delattr(self, 'offset')
-        if exposure is None:
-            delattr(self, 'exposure')
-
-        self.nobs = self.endog.shape[0]
-
-        # things to remove_data
-        self._data_attr.extend(['weights', 'mu', 'freq_weights',
-                                'var_weights', 'iweights', '_offset_exposure',
-                                'n_trials'])
-        # register kwds for __init__, offset and exposure are added by super
-        self._init_keys.append('family')
-
-        self._setup_binomial()
-        # internal usage for recreating a model
-        if 'n_trials' in kwargs:
-            self.n_trials = kwargs['n_trials']
-
-        # Construct a combined offset/exposure term.  Note that
-        # exposure has already been logged if present.
-        offset_exposure = 0.
-        if hasattr(self, 'offset'):
-            offset_exposure = self.offset
-        if hasattr(self, 'exposure'):
-            offset_exposure = offset_exposure + self.exposure
-        self._offset_exposure = offset_exposure
-
-        self.scaletype = None
-
-    def initialize(self):
-        self.df_model = np.linalg.matrix_rank(self.exog) - 1
-
-        if (self.freq_weights is not None) and \
-           (self.freq_weights.shape[0] == self.endog.shape[0]):
-            self.wnobs = self.freq_weights.sum()
-            self.df_resid = self.wnobs - self.df_model - 1
-        else:
-            self.wnobs = self.exog.shape[0]
-            self.df_resid = self.exog.shape[0] - self.df_model - 1
+    @property
+    def exog_names(self):
+        return self.data.xnames
 
     def _check_inputs(self, family, offset, exposure, endog, freq_weights,
                       var_weights):
