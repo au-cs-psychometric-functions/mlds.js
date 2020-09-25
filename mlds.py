@@ -11,7 +11,6 @@ from statsmodels.graphics._regressionplots_doc import (
     _plot_partial_residuals_doc,
     _plot_ceres_residuals_doc)
 from statsmodels.base.data import handle_data
-from statsmodels.formula import handle_formula_data
 import statsmodels.regression._tools as reg_tools
 import statsmodels.regression.linear_model as lm
 import statsmodels.base.wrapper as wrap
@@ -516,58 +515,6 @@ class GLM():
             except KeyError:  # panel already pops keys in data handling
                 pass
         return data
-
-    @classmethod
-    def from_formula(cls, formula, data, subset=None, drop_cols=None,
-                     *args, **kwargs):
-        # TODO: provide a docs template for args/kwargs from child models
-        # TODO: subset could use syntax. issue #469.
-        if subset is not None:
-            data = data.loc[subset]
-        eval_env = kwargs.pop('eval_env', None)
-        if eval_env is None:
-            eval_env = 2
-        elif eval_env == -1:
-            from patsy import EvalEnvironment
-            eval_env = EvalEnvironment({})
-        elif isinstance(eval_env, int):
-            eval_env += 1  # we're going down the stack again
-        missing = kwargs.get('missing', 'drop')
-        if missing == 'none':  # with patsy it's drop or raise. let's raise.
-            missing = 'raise'
-
-        tmp = handle_formula_data(data, None, formula, depth=eval_env,
-                                  missing=missing)
-        ((endog, exog), missing_idx, design_info) = tmp
-        max_endog = cls._formula_max_endog
-        if (max_endog is not None and
-                endog.ndim > 1 and endog.shape[1] > max_endog):
-            raise ValueError('endog has evaluated to an array with multiple '
-                             'columns that has shape {0}. This occurs when '
-                             'the variable converted to endog is non-numeric'
-                             ' (e.g., bool or str).'.format(endog.shape))
-        if drop_cols is not None and len(drop_cols) > 0:
-            cols = [x for x in exog.columns if x not in drop_cols]
-            if len(cols) < len(exog.columns):
-                exog = exog[cols]
-                cols = list(design_info.term_names)
-                for col in drop_cols:
-                    try:
-                        cols.remove(col)
-                    except ValueError:
-                        pass  # OK if not present
-                design_info = design_info.subset(cols)
-
-        kwargs.update({'missing_idx': missing_idx,
-                       'missing': missing,
-                       'formula': formula,  # attach formula for unpckling
-                       'design_info': design_info})
-        mod = cls(endog, exog, *args, **kwargs)
-        mod.formula = formula
-
-        # since we got a dataframe, attach the original
-        mod.data.frame = data
-        return mod
 
     @property
     def endog_names(self):
@@ -2209,7 +2156,7 @@ wrap.populate_wrapper(GLMResultsWrapper, GLMResults)
 
 def mlds(filename):
     data = pd.read_table(filename, sep='\t')
-    res = GLM.from_formula('resp ~ S2 + S3 + S4 + S5 + S6 + S7 + S8 + S9 + S10 + S10 + S11 - 1', family=Binomial(probit()), data=data).fit()
+    res = GLM(data['resp'], data.drop('resp', axis=1), family=Binomial(probit()), data=data).fit()
     print(res.summary())
 
 if __name__ == '__main__':
