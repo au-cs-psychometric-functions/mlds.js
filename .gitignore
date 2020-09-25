@@ -1,2 +1,10 @@
+MLDS/
+stats/
+.idea/
+.vscode/
 .venv/
+.Rproj.user
+.Rhistory
+.RData
+.Rprofile
 *.pyc
