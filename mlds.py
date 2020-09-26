@@ -14,12 +14,25 @@ from statsmodels.base.data import handle_data
 
 FLOAT_EPS = np.finfo(float).eps
 
-class Model(object):
-    _formula_max_endog = 1
-
-    def __init__(self, endog, exog=None, **kwargs):
+class WLS():
+    def __init__(self, endog, exog=None, weights=1., **kwargs):
         missing = kwargs.pop('missing', 'none')
         hasconst = kwargs.pop('hasconst', None)
+
+        self.weights = np.array(weights)
+        if weights.shape == ():
+            if (missing == 'drop' and 'missing_idx' in kwargs and
+                    kwargs['missing_idx'] is not None):
+                # patsy may have truncated endog
+                weights = np.repeat(weights, len(kwargs['missing_idx']))
+            else:
+                weights = np.repeat(weights, len(endog))
+        # handle case that endog might be of len == 1
+        if len(weights) == 1:
+            weights = np.array([weights.squeeze()])
+        else:
+            weights = weights.squeeze()
+
         self.data = self._handle_data(endog, exog, missing, hasconst,
                                       **kwargs)
         self.k_constant = self.data.k_constant
@@ -34,6 +47,50 @@ class Model(object):
         self._init_keys = list(kwargs.keys())
         if hasconst is not None:
             self._init_keys.append('hasconst')
+
+        self.initialize()
+        self._data_attr.extend(['pinv_wexog', 'weights'])
+
+        nobs = self.exog.shape[0]
+        weights = self.weights
+        # Experimental normalization of weights
+        weights = weights / np.sum(weights) * nobs
+        if weights.size != nobs and weights.shape[0] != nobs:
+            raise ValueError('Weights must be scalar or same length as design')
+
+    def initialize(self):
+        self.wexog = self.whiten(self.exog)
+        self.wendog = self.whiten(self.endog)
+        # overwrite nobs from class Model:
+        self.nobs = float(self.wexog.shape[0])
+
+        self._df_model = None
+        self._df_resid = None
+        self.rank = None
+
+    @property
+    def df_model(self):
+        if self._df_model is None:
+            if self.rank is None:
+                self.rank = np.linalg.matrix_rank(self.exog)
+            self._df_model = float(self.rank - self.k_constant)
+        return self._df_model
+
+    @df_model.setter
+    def df_model(self, value):
+        self._df_model = value
+
+    @property
+    def df_resid(self):
+        if self._df_resid is None:
+            if self.rank is None:
+                self.rank = np.linalg.matrix_rank(self.exog)
+            self._df_resid = self.nobs - self.rank
+        return self._df_resid
+
+    @df_resid.setter
+    def df_resid(self, value):
+        self._df_resid = value
 
     def _get_init_kwds(self):
         kwds = dict(((key, getattr(self, key, None))
@@ -112,293 +169,6 @@ class Model(object):
     def exog_names(self):
         return self.data.xnames
 
-    def fit(self):
-        raise NotImplementedError
-
-    def predict(self, params, exog=None, *args, **kwargs):
-        raise NotImplementedError
-
-
-class LikelihoodModel(Model):
-    def __init__(self, endog, exog=None, **kwargs):
-        super(LikelihoodModel, self).__init__(endog, exog, **kwargs)
-        self.initialize()
-
-    def initialize(self):
-        pass
-
-    # TODO: if the intent is to re-initialize the model with new data then this
-    # method needs to take inputs...
-
-    def loglike(self, params):
-        raise NotImplementedError
-
-    def score(self, params):
-        raise NotImplementedError
-
-    def information(self, params):
-        raise NotImplementedError
-
-    def hessian(self, params):
-        raise NotImplementedError
-
-    def fit(self, start_params=None, method='newton', maxiter=100,
-            full_output=True, disp=True, fargs=(), callback=None, retall=False,
-            skip_hessian=False, **kwargs):
-        Hinv = None  # JP error if full_output=0, Hinv not defined
-
-        if start_params is None:
-            if hasattr(self, 'start_params'):
-                start_params = self.start_params
-            elif self.exog is not None:
-                # fails for shape (K,)?
-                start_params = [0] * self.exog.shape[1]
-            else:
-                raise ValueError("If exog is None, then start_params should "
-                                 "be specified")
-
-        # TODO: separate args from nonarg taking score and hessian, ie.,
-        # user-supplied and numerically evaluated estimate frprime does not take
-        # args in most (any?) of the optimize function
-
-        nobs = self.endog.shape[0]
-        # f = lambda params, *args: -self.loglike(params, *args) / nobs
-
-        def f(params, *args):
-            return -self.loglike(params, *args) / nobs
-
-        if method == 'newton':
-            # TODO: why are score and hess positive?
-            def score(params, *args):
-                return self.score(params, *args) / nobs
-
-            def hess(params, *args):
-                return self.hessian(params, *args) / nobs
-        else:
-            def score(params, *args):
-                return -self.score(params, *args) / nobs
-
-            def hess(params, *args):
-                return -self.hessian(params, *args) / nobs
-
-        warn_convergence = kwargs.pop('warn_convergence', True)
-        optimizer = Optimizer()
-        xopt, retvals, optim_settings = optimizer._fit(f, score, start_params,
-                                                       fargs, kwargs,
-                                                       hessian=hess,
-                                                       method=method,
-                                                       disp=disp,
-                                                       maxiter=maxiter,
-                                                       callback=callback,
-                                                       retall=retall,
-                                                       full_output=full_output)
-
-        # NOTE: this is for fit_regularized and should be generalized
-        cov_params_func = kwargs.setdefault('cov_params_func', None)
-        if cov_params_func:
-            Hinv = cov_params_func(self, xopt, retvals)
-        elif method == 'newton' and full_output:
-            Hinv = np.linalg.inv(-retvals['Hessian']) / nobs
-        elif not skip_hessian:
-            H = -1 * self.hessian(xopt)
-            invertible = False
-            if np.all(np.isfinite(H)):
-                eigvals, eigvecs = np.linalg.eigh(H)
-                if np.min(eigvals) > 0:
-                    invertible = True
-
-            if invertible:
-                Hinv = eigvecs.dot(np.diag(1.0 / eigvals)).dot(eigvecs.T)
-                Hinv = np.asfortranarray((Hinv + Hinv.T) / 2.0)
-            else:
-                warnings.warn('Inverting hessian failed, no bse or cov_params '
-                              'available', HessianInversionWarning)
-                Hinv = None
-
-        if 'cov_type' in kwargs:
-            cov_kwds = kwargs.get('cov_kwds', {})
-            kwds = {'cov_type': kwargs['cov_type'], 'cov_kwds': cov_kwds}
-        else:
-            kwds = {}
-        if 'use_t' in kwargs:
-            kwds['use_t'] = kwargs['use_t']
-        # TODO: add Hessian approximation and change the above if needed
-        mlefit = LikelihoodModelResults(self, xopt, Hinv, scale=1., **kwds)
-
-        # TODO: hardcode scale?
-        mlefit.mle_retvals = retvals
-        if isinstance(retvals, dict):
-            if warn_convergence and not retvals['converged']:
-                from statsmodels.tools.sm_exceptions import ConvergenceWarning
-                warnings.warn("Maximum Likelihood optimization failed to "
-                              "converge. Check mle_retvals",
-                              ConvergenceWarning)
-
-        mlefit.mle_settings = optim_settings
-        return mlefit
-
-    def _fit_zeros(self, keep_index=None, start_params=None,
-                   return_auxiliary=False, k_params=None, **fit_kwds):
-        # we need to append index of extra params to keep_index as in
-        # NegativeBinomial
-        if hasattr(self, 'k_extra') and self.k_extra > 0:
-            # we cannot change the original, TODO: should we add keep_index_params?
-            keep_index = np.array(keep_index, copy=True)
-            k = self.exog.shape[1]
-            extra_index = np.arange(k, k + self.k_extra)
-            keep_index_p = np.concatenate((keep_index, extra_index))
-        else:
-            keep_index_p = keep_index
-
-        # not all models support start_params, drop if None, hide them in fit_kwds
-        if start_params is not None:
-            fit_kwds['start_params'] = start_params[keep_index_p]
-            k_params = len(start_params)
-            # ignore k_params in this case, or verify consisteny?
-
-        # build auxiliary model and fit
-        init_kwds = self._get_init_kwds()
-        mod_constr = self.__class__(self.endog, self.exog[:, keep_index],
-                                    **init_kwds)
-        res_constr = mod_constr.fit(**fit_kwds)
-        # switch name, only need keep_index for params below
-        keep_index = keep_index_p
-
-        if k_params is None:
-            k_params = self.exog.shape[1]
-            k_params += getattr(self, 'k_extra', 0)
-
-        params_full = np.zeros(k_params)
-        params_full[keep_index] = res_constr.params
-
-        # create dummy results Instance, TODO: wire up properly
-        # TODO: this could be moved into separate private method if needed
-        # discrete L1 fit_regularized doens't reestimate AFAICS
-        # RLM does not have method, disp nor warn_convergence keywords
-        # OLS, WLS swallows extra kwds with **kwargs, but does not have method='nm'
-        try:
-            # Note: addding full_output=False causes exceptions
-            res = self.fit(maxiter=0, disp=0, method='nm', skip_hessian=True,
-                           warn_convergence=False, start_params=params_full)
-            # we get a wrapper back
-        except (TypeError, ValueError):
-            res = self.fit()
-
-        # Warning: make sure we are not just changing the wrapper instead of
-        # results #2400
-        # TODO: do we need to change res._results.scale in some models?
-        if hasattr(res_constr.model, 'scale'):
-            # Note: res.model is self
-            # GLM problem, see #2399,
-            # TODO: remove from model if not needed anymore
-            res.model.scale = res._results.scale = res_constr.model.scale
-
-        if hasattr(res_constr, 'mle_retvals'):
-            res._results.mle_retvals = res_constr.mle_retvals
-            # not available for not scipy optimization, e.g. glm irls
-            # TODO: what retvals should be required?
-            # res.mle_retvals['fcall'] = res_constr.mle_retvals.get('fcall', np.nan)
-            # res.mle_retvals['iterations'] = res_constr.mle_retvals.get(
-            #                                                 'iterations', np.nan)
-            # res.mle_retvals['converged'] = res_constr.mle_retvals['converged']
-        # overwrite all mle_settings
-        if hasattr(res_constr, 'mle_settings'):
-            res._results.mle_settings = res_constr.mle_settings
-
-        res._results.params = params_full
-        if (not hasattr(res._results, 'normalized_cov_params') or
-                res._results.normalized_cov_params is None):
-            res._results.normalized_cov_params = np.zeros((k_params, k_params))
-        else:
-            res._results.normalized_cov_params[...] = 0
-
-        # fancy indexing requires integer array
-        keep_index = np.array(keep_index)
-        res._results.normalized_cov_params[keep_index[:, None], keep_index] = \
-            res_constr.normalized_cov_params
-        k_constr = res_constr.df_resid - res._results.df_resid
-        if hasattr(res_constr, 'cov_params_default'):
-            res._results.cov_params_default = np.zeros((k_params, k_params))
-            res._results.cov_params_default[keep_index[:, None], keep_index] = \
-                res_constr.cov_params_default
-        if hasattr(res_constr, 'cov_type'):
-            res._results.cov_type = res_constr.cov_type
-            res._results.cov_kwds = res_constr.cov_kwds
-
-        res._results.keep_index = keep_index
-        res._results.df_resid = res_constr.df_resid
-        res._results.df_model = res_constr.df_model
-
-        res._results.k_constr = k_constr
-        res._results.results_constrained = res_constr
-
-        # special temporary workaround for RLM
-        # need to be able to override robust covariances
-        if hasattr(res.model, 'M'):
-            del res._results._cache['resid']
-            del res._results._cache['fittedvalues']
-            del res._results._cache['sresid']
-            cov = res._results._cache['bcov_scaled']
-            # inplace adjustment
-            cov[...] = 0
-            cov[keep_index[:, None], keep_index] = res_constr.bcov_scaled
-            res._results.cov_params_default = cov
-
-        return res
-
-    def _fit_collinear(self, atol=1e-14, rtol=1e-13, **kwds):
-        # ------ copied from PR #2380 remove when merged
-        x = self.exog
-        tol = atol + rtol * x.var(0)
-        r = np.linalg.qr(x, mode='r')
-        mask = np.abs(r.diagonal()) < np.sqrt(tol)
-        # TODO add to results instance
-        # idx_collinear = np.where(mask)[0]
-        idx_keep = np.where(~mask)[0]
-        return self._fit_zeros(keep_index=idx_keep, **kwds)
-
-class RegressionModel(LikelihoodModel):
-    def __init__(self, endog, exog, **kwargs):
-        super(RegressionModel, self).__init__(endog, exog, **kwargs)
-        self._data_attr.extend(['pinv_wexog', 'weights'])
-
-    def initialize(self):
-        self.wexog = self.whiten(self.exog)
-        self.wendog = self.whiten(self.endog)
-        # overwrite nobs from class Model:
-        self.nobs = float(self.wexog.shape[0])
-
-        self._df_model = None
-        self._df_resid = None
-        self.rank = None
-
-    @property
-    def df_model(self):
-        if self._df_model is None:
-            if self.rank is None:
-                self.rank = np.linalg.matrix_rank(self.exog)
-            self._df_model = float(self.rank - self.k_constant)
-        return self._df_model
-
-    @df_model.setter
-    def df_model(self, value):
-        self._df_model = value
-
-    @property
-    def df_resid(self):
-        if self._df_resid is None:
-            if self.rank is None:
-                self.rank = np.linalg.matrix_rank(self.exog)
-            self._df_resid = self.nobs - self.rank
-        return self._df_resid
-
-    @df_resid.setter
-    def df_resid(self, value):
-        self._df_resid = value
-
-    def whiten(self, x):
-        raise NotImplementedError("Subclasses must implement.")
-
     def fit(self, method="pinv", cov_type='nonrobust', cov_kwds=None,
             use_t=None, **kwargs):
         if method == "pinv":
@@ -463,31 +233,6 @@ class RegressionModel(LikelihoodModel):
         gen = dist_class(loc=fit, scale=np.sqrt(scale))
         return gen
 
-class WLS(RegressionModel):
-    def __init__(self, endog, exog, weights=1., missing='none', hasconst=None,
-                 **kwargs):
-        weights = np.array(weights)
-        if weights.shape == ():
-            if (missing == 'drop' and 'missing_idx' in kwargs and
-                    kwargs['missing_idx'] is not None):
-                # patsy may have truncated endog
-                weights = np.repeat(weights, len(kwargs['missing_idx']))
-            else:
-                weights = np.repeat(weights, len(endog))
-        # handle case that endog might be of len == 1
-        if len(weights) == 1:
-            weights = np.array([weights.squeeze()])
-        else:
-            weights = weights.squeeze()
-        super(WLS, self).__init__(endog, exog, missing=missing,
-                                  weights=weights, hasconst=hasconst, **kwargs)
-        nobs = self.exog.shape[0]
-        weights = self.weights
-        # Experimental normalization of weights
-        weights = weights / np.sum(weights) * nobs
-        if weights.size != nobs and weights.shape[0] != nobs:
-            raise ValueError('Weights must be scalar or same length as design')
-
     def whiten(self, x):
         x = np.asarray(x)
         if x.ndim == 1:
@@ -502,31 +247,6 @@ class WLS(RegressionModel):
         llf -= (1+np.log(np.pi/nobs2))*nobs2  # with constant
         llf += 0.5 * np.sum(np.log(self.weights))
         return llf
-
-    def hessian_factor(self, params, scale=None, observed=True):
-        return self.weights
-
-    def fit_regularized(self, method="elastic_net", alpha=0.,
-                        L1_wt=1., start_params=None, profile_scale=False,
-                        refit=False, **kwargs):
-        # Docstring attached below
-        if not np.isscalar(alpha):
-            alpha = np.asarray(alpha)
-        # Need to adjust since RSS/n in elastic net uses nominal n in
-        # denominator
-        alpha = alpha * np.sum(self.weights) / len(self.weights)
-
-        rslt = OLS(self.wendog, self.wexog).fit_regularized(
-            method=method, alpha=alpha,
-            L1_wt=L1_wt,
-            start_params=start_params,
-            profile_scale=profile_scale,
-            refit=refit, **kwargs)
-
-        from statsmodels.base.elastic_net import (
-            RegularizedResults, RegularizedResultsWrapper)
-        rrslt = RegularizedResults(self, rslt.params)
-        return RegularizedResultsWrapper(rrslt)
 
 class Results():
     def __init__(self, model, params, **kwd):
@@ -990,19 +710,6 @@ class LikelihoodModelResults(Results):
             lower = lower[cols]
             upper = upper[cols]
         return np.asarray(lzip(lower, upper))
-
-    def save(self, fname, remove_data=False):
-        from statsmodels.iolib.smpickle import save_pickle
-
-        if remove_data:
-            self.remove_data()
-
-        save_pickle(self, fname)
-
-    @classmethod
-    def load(cls, fname):
-        from statsmodels.iolib.smpickle import load_pickle
-        return load_pickle(fname)
 
     def remove_data(self):
         cls = self.__class__
