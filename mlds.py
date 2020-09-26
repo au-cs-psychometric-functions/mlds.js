@@ -2,12 +2,50 @@ import pandas as pd
 import numpy as np
 import scipy.stats
 from scipy import special
-from statsmodels.base.data import handle_data
+# from statsmodels.base.data import handle_data
+from statsmodels.base.data import ModelData, PandasData, PatsyData
+import statsmodels.tools.data as data_util
 import statsmodels.regression._tools as reg_tools
 import statsmodels.regression.linear_model as lm
-from statsmodels.compat.python import lzip
 
 FLOAT_EPS = np.finfo(float).eps
+
+def handle_data_class_factory(endog, exog):
+    """
+    Given inputs
+    """
+    if data_util._is_using_ndarray_type(endog, exog):
+        print('model')
+        klass = ModelData
+    elif data_util._is_using_pandas(endog, exog):
+        print('pandas')
+        klass = PandasData
+    elif data_util._is_using_patsy(endog, exog):
+        print('patsy')
+        klass = PatsyData
+    # keep this check last
+    elif data_util._is_using_ndarray(endog, exog):
+        print('model')
+        klass = ModelData
+    else:
+        raise ValueError('unrecognized data structures: %s / %s' %
+                         (type(endog), type(exog)))
+    return klass
+
+
+def handle_data(endog, exog, missing='none', hasconst=None, **kwargs):
+    # deal with lists and tuples up-front
+    if isinstance(endog, (list, tuple)):
+        print('endog')
+        endog = np.asarray(endog)
+    if isinstance(exog, (list, tuple)):
+        print('exog')
+        exog = np.asarray(exog)
+
+    klass = handle_data_class_factory(endog, exog)
+    return klass(endog, exog=exog, missing=missing, hasconst=hasconst,
+                 **kwargs)
+
 
 class Link(object):
     pass
@@ -263,6 +301,8 @@ class GLM():
 
         self.initialize()
 
+        self._check_inputs(family, self.offset, self.exposure, self.endog,
+                           self.freq_weights, self.var_weights)
         if offset is None:
             delattr(self, 'offset')
         if exposure is None:
@@ -314,6 +354,7 @@ class GLM():
         data = handle_data(endog, exog, missing, hasconst, **kwargs)
         # kwargs arrays could have changed, easier to just attach here
         for key in kwargs:
+            print('kwargs')
             if key in ['design_info', 'formula']:  # leave attached to data
                 continue
             # pop so we do not start keeping all these twice or references
@@ -330,6 +371,54 @@ class GLM():
     @property
     def exog_names(self):
         return self.data.xnames
+
+    def _check_inputs(self, family, offset, exposure, endog, freq_weights,
+                      var_weights):
+
+        # Default family is Gaussian
+        if family is None:
+            family = Binomial()
+        self.family = family
+
+        if exposure is not None:
+            if not isinstance(self.family.link, Log):
+                raise ValueError("exposure can only be used with the log "
+                                 "link function")
+            elif exposure.shape[0] != endog.shape[0]:
+                raise ValueError("exposure is not the same length as endog")
+
+        if offset is not None:
+            if offset.shape[0] != endog.shape[0]:
+                raise ValueError("offset is not the same length as endog")
+
+        if freq_weights is not None:
+            if freq_weights.shape[0] != endog.shape[0]:
+                raise ValueError("freq weights not the same length as endog")
+            if len(freq_weights.shape) > 1:
+                raise ValueError("freq weights has too many dimensions")
+
+        # internal flag to store whether freq_weights were not None
+        self._has_freq_weights = (self.freq_weights is not None)
+        if self.freq_weights is None:
+            self.freq_weights = np.ones((endog.shape[0]))
+            # TODO: check do we want to keep None as sentinel for freq_weights
+
+        if np.shape(self.freq_weights) == () and self.freq_weights > 1:
+            self.freq_weights = (self.freq_weights *
+                                 np.ones((endog.shape[0])))
+
+        if var_weights is not None:
+            if var_weights.shape[0] != endog.shape[0]:
+                raise ValueError("var weights not the same length as endog")
+            if len(var_weights.shape) > 1:
+                raise ValueError("var weights has too many dimensions")
+
+        # internal flag to store whether var_weights were not None
+        self._has_var_weights = (var_weights is not None)
+        if var_weights is None:
+            self.var_weights = np.ones((endog.shape[0]))
+            # TODO: check do we want to keep None as sentinel for var_weights
+        self.iweights = np.asarray(self.freq_weights * self.var_weights)
 
     def _get_init_kwds(self):
         # this is a temporary fixup because exposure has been transformed
