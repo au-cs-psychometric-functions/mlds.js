@@ -12,26 +12,7 @@ from statsmodels.compat.python import lzip
 FLOAT_EPS = np.finfo(float).eps
 
 class Link(object):
-    def __call__(self, p):
-        return NotImplementedError
-
-    def inverse(self, z):
-        return NotImplementedError
-
-    def deriv(self, p):
-        return NotImplementedError
-
-    def deriv2(self, p):
-        from statsmodels.tools.numdiff import approx_fprime_cs
-        # TODO: workaround proplem with numdiff for 1d
-        return np.diag(approx_fprime_cs(p, self.deriv))
-
-    def inverse_deriv(self, z):
-        return 1 / self.deriv(self.inverse(z))
-
-    def inverse_deriv2(self, z):
-        iz = self.inverse(z)
-        return -self.deriv2(iz) / self.deriv(iz)**3
+    pass
 
 class Logit(Link):
     def _clean(self, p):
@@ -54,10 +35,6 @@ class Logit(Link):
         t = np.exp(z)
         return t/(1 + t)**2
 
-    def deriv2(self, p):
-        v = p * (1 - p)
-        return (2*p - 1) / v**2
-
 class logit(Logit):
     pass
 
@@ -76,12 +53,6 @@ class CDFLink(Logit):
         p = self._clean(p)
         return 1. / self.dbn.pdf(self.dbn.ppf(p))
 
-    def deriv2(self, p):
-        from statsmodels.tools.numdiff import approx_fprime
-        p = np.atleast_1d(p)
-        # Note: special function for norm.ppf does not support complex
-        return np.diag(approx_fprime(p, self.deriv, centered=True))
-
     def inverse_deriv(self, z):
         return 1/self.deriv(self.inverse(z))
 
@@ -91,11 +62,6 @@ class probit(CDFLink):
 class cauchy(CDFLink):
     def __init__(self):
         super(cauchy, self).__init__(dbn=scipy.stats.cauchy)
-
-    def deriv2(self, p):
-        a = np.pi * (p - 0.5)
-        d2 = 2 * np.pi**2 * np.sin(a) / np.cos(a)**3
-        return d2
 
 class Log(Link):
     def _clean(self, x):
@@ -111,10 +77,6 @@ class Log(Link):
     def deriv(self, p):
         p = self._clean(p)
         return 1. / p
-
-    def deriv2(self, p):
-        p = self._clean(p)
-        return -1. / p**2
 
     def inverse_deriv(self, z):
         return np.exp(z)
@@ -134,13 +96,6 @@ class CLogLog(Logit):
     def deriv(self, p):
         p = self._clean(p)
         return 1. / ((p - 1) * (np.log(1 - p)))
-
-    def deriv2(self, p):
-        p = self._clean(p)
-        fl = np.log(1 - p)
-        d2 = -1 / ((1 - p)**2 * fl)
-        d2 *= 1 + 1 / fl
-        return d2
 
     def inverse_deriv(self, z):
         return np.exp(z - np.exp(z))
@@ -1324,4 +1279,5 @@ def mlds(filename):
     print(res.summary())
 
 if __name__ == '__main__':
-    mlds('data.txt')
+    # mlds('data.txt')
+    print(FLOAT_EPS)
