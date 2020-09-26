@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 import scipy.stats
 from scipy import special
-from statsmodels.base.data import ModelData
 import statsmodels.regression._tools as reg_tools
 import statsmodels.regression.linear_model as lm
 
@@ -175,14 +174,9 @@ class GLM():
         missing = 'none'
         hasconst = None
 
-        endog = np.asarray(endog)
-        exog = np.asarray(exog)
-        self.data = ModelData(endog, exog=exog, missing=missing, hasconst=hasconst)
+        self.endog = np.asarray(endog)
+        self.exog = np.asarray(exog)
 
-        self.exog = self.data.exog
-        self.endog = self.data.endog
-        self._data_attr = []
-        self._data_attr.extend(['exog', 'endog', 'data.exog', 'data.endog'])
         # store keys for extras if we need to recreate model instance
         # we do not need 'missing', maybe we need 'hasconst'
         self._init_keys = []
@@ -199,10 +193,6 @@ class GLM():
 
         self.nobs = self.endog.shape[0]
 
-        # things to remove_data
-        self._data_attr.extend(['weights', 'mu', 'freq_weights',
-                                'var_weights', 'iweights',
-                                'n_trials'])
         # register kwds for __init__, offset and exposure are added by super
         self._init_keys.append('family')
 
