@@ -506,15 +506,29 @@ class GLM():
             wls_model = lm.WLS(wlsendog, wlsexog, self.weights)
             wls_results = wls_model.fit(method=wls_method2)
 
-        print(wls_results.params)
         logLike = self.family.loglike(self.endog, self.mu, var_weights=self.var_weights, freq_weights=self.freq_weights, scale=self.scale)
-        print(str(logLike))
-        print(str(self.scale))
+        return Summary('probit', wls_results.params, self.scale, logLike)
+
+class Summary():
+    def __init__(self, link, params, scale, loglike):
+        self.link = link
+        self.params = [0] + params
+        self.scale = scale
+        self.loglike = loglike
+
+    def print(self):
+        print('Method: GLM')
+        print('Link: {}\n'.format(self.link))
+        for param in self.params:
+            print(param)
+        print()
+        print('sigma: {}'.format(self.scale))
+        print('logLik: {}'.format(self.loglike))
 
 def mlds(filename):
     data = pd.read_table(filename, sep='\t')
-    res = GLM(data['resp'], data.drop('resp', axis=1), family=Binomial(probit()), data=data).fit()
-    # print(res.summary())
+    summary = GLM(data['resp'], data.drop('resp', axis=1), family=Binomial(probit()), data=data).fit()
+    summary.print()
 
 if __name__ == '__main__':
     mlds('table.txt')
