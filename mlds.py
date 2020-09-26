@@ -157,8 +157,6 @@ class BinomialVariance(object):
 class Binomial():
     links = [logit, probit, cauchy, log, cloglog]
 
-    safe_links = [Logit, CDFLink]
-
     def _setlink(self, link):
         self._link = link
         if not isinstance(link, Link):
@@ -202,14 +200,11 @@ class Binomial():
     def weights(self, mu):
         return 1. / (self.link.deriv(mu)**2 * self.variance(mu))
 
-    def deviance(self, endog, mu, var_weights=1., freq_weights=1., scale=1.):
-        resid_dev = self._resid_dev(endog, mu)
-        return np.sum(resid_dev * freq_weights * var_weights / scale)
-
-    def resid_dev(self, endog, mu, var_weights=1., scale=1.):
-        resid_dev = self._resid_dev(endog, mu)
-        resid_dev *= var_weights / scale
-        return np.sign(endog - mu) * np.sqrt(np.clip(resid_dev, 0., np.inf))
+    def deviance(self, endog, mu):
+        endog_mu = self._clean(endog / mu)
+        n_endog_mu = self._clean((1. - endog) / (1. - mu))
+        resid_dev = endog * np.log(endog_mu) + (1 - endog) * np.log(n_endog_mu)
+        return np.sum(2 * self.n * resid_dev)
 
     def fitted(self, lin_pred):
         fits = self.link.inverse(lin_pred)
@@ -225,12 +220,6 @@ class Binomial():
     def _clean(self, x):
         return np.clip(x, FLOAT_EPS, np.inf)
 
-    def _resid_dev(self, endog, mu):
-        endog_mu = self._clean(endog / mu)
-        n_endog_mu = self._clean((1. - endog) / (1. - mu))
-        resid_dev = endog * np.log(endog_mu) + (1 - endog) * np.log(n_endog_mu)
-        return 2 * self.n * resid_dev
-
     def loglike_obs(self, endog, mu, var_weights=1., scale=1.):
         n = self.n     # Number of trials
         y = endog * n  # Number of successes
@@ -239,19 +228,6 @@ class Binomial():
         return (special.gammaln(n + 1) - special.gammaln(y + 1) -
                 special.gammaln(n - y + 1) + y * np.log(mu / (1 - mu)) +
                 n * np.log(1 - mu)) * var_weights
-
-    def resid_anscombe(self, endog, mu, var_weights=1., scale=1.):
-        endog = endog * self.n  # convert back to successes
-        mu = mu * self.n  # convert back to successes
-
-        def cox_snell(x):
-            return special.betainc(2/3., 2/3., x) * special.beta(2/3., 2/3.)
-
-        resid = (self.n ** (2/3.) * (cox_snell(endog * 1. / self.n) -
-                                     cox_snell(mu * 1. / self.n)) /
-                 (mu * (1 - mu * 1. / self.n) * scale ** 3) ** (1 / 6.))
-        resid *= np.sqrt(var_weights)
-        return resid
 
 def _check_convergence(criterion, iteration, atol, rtol):
     return np.allclose(criterion[iteration], criterion[iteration + 1],
@@ -410,10 +386,7 @@ class GLM():
 
     def _update_history(self, tmp_result, mu, history):
         history['params'].append(tmp_result.params)
-        history['deviance'].append(self.family.deviance(self.endog, mu,
-                                                        self.var_weights,
-                                                        self.freq_weights,
-                                                        self.scale))
+        history['deviance'].append(self.family.deviance(self.endog, mu))
         return history
 
     def estimate_scale(self, mu):
@@ -430,9 +403,7 @@ class GLM():
             if self.scaletype.lower() == 'x2':
                 return self._estimate_x2_scale(mu)
             elif self.scaletype.lower() == 'dev':
-                return (self.family.deviance(self.endog, mu, self.var_weights,
-                                             self.freq_weights, 1.) /
-                        (self.df_resid))
+                return (self.family.deviance(self.endog, mu) / (self.df_resid))
             else:
                 raise ValueError("Scale %s with type %s not understood" %
                                  (self.scaletype, type(self.scaletype)))
@@ -443,37 +414,6 @@ class GLM():
     def _estimate_x2_scale(self, mu):
         resid = np.power(self.endog - mu, 2) * self.iweights
         return np.sum(resid / self.family.variance(mu)) / self.df_resid
-
-    def predict(self, params, exog=None, exposure=None, offset=None,
-                linear=False):
-        # Use fit offset if appropriate
-        if offset is None and exog is None and hasattr(self, 'offset'):
-            offset = self.offset
-        elif offset is None:
-            offset = 0.
-
-        if exposure is not None and not isinstance(self.family.link,
-                                                   families.links.Log):
-            raise ValueError("exposure can only be used with the log link "
-                             "function")
-
-        # Use fit exposure if appropriate
-        if exposure is None and exog is None and hasattr(self, 'exposure'):
-            # Already logged
-            exposure = self.exposure
-        elif exposure is None:
-            exposure = 0.
-        else:
-            exposure = np.log(np.asarray(exposure))
-
-        if exog is None:
-            exog = self.exog
-
-        linpred = np.dot(exog, params) + offset + exposure
-        if linear:
-            return linpred
-        else:
-            return self.family.fitted(linpred)
 
     def _setup_binomial(self):
         # this checks what kind of data is given for Binomial.
@@ -522,8 +462,7 @@ class GLM():
             lin_pred = np.dot(wlsexog, start_params)
             mu = self.family.fitted(lin_pred)
         self.scale = self.estimate_scale(mu)
-        dev = self.family.deviance(self.endog, mu, self.var_weights,
-                                   self.freq_weights, self.scale)
+        dev = self.family.deviance(self.endog, mu)
         if np.isnan(dev):
             raise ValueError("The first guess on the deviance function "
                              "returned a nan.  This could be a boundary "
