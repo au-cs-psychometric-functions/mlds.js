@@ -384,36 +384,26 @@ class GLM():
             self.n_trials = tmp[1]
             self._init_keys.append('n_trials')
 
-    def fit(self, start_params=None, maxiter=100, tol=1e-8, cov_type='nonrobust', cov_kwds=None, use_t=None,
-            full_output=True, disp=False, max_start_irls=3, **kwargs):
-
-        attach_wls = kwargs.pop('attach_wls', False)
-        atol = kwargs.get('atol')
-        rtol = kwargs.get('rtol', 0.)
-        tol_criterion = kwargs.get('tol_criterion', 'deviance')
-        atol = tol if atol is None else atol
+    def fit(self):
+        maxiter = 100
+        atol = 1e-8
+        rtol = 0
 
         endog = self.endog
         wlsexog = self.exog
-        if start_params is None:
-            start_params = np.zeros(self.exog.shape[1])
-            mu = self.family.starting_mu(self.endog)
-            lin_pred = self.family.predict(mu)
-        else:
-            lin_pred = np.dot(wlsexog, start_params)
-            mu = self.family.fitted(lin_pred)
+
+        start_params = np.zeros(self.exog.shape[1])
+        mu = self.family.starting_mu(self.endog)
+        lin_pred = self.family.predict(mu)
         self.scale = 1
+        
         dev = self.family.deviance(self.endog, mu)
-        if np.isnan(dev):
-            raise ValueError("The first guess on the deviance function "
-                             "returned a nan.  This could be a boundary "
-                             " problem and should be reported.")
 
         # first guess on the deviance is assumed to be scaled by 1.
         # params are none to start, so they line up with the deviance
         history = dict(params=[np.inf, start_params], deviance=[np.inf, dev])
         converged = False
-        criterion = history[tol_criterion]
+        criterion = history['deviance']
 
         for iteration in range(maxiter):
             self.weights = (self.iweights * self.n_trials *
@@ -426,7 +416,6 @@ class GLM():
             lin_pred = np.dot(self.exog, wls_results.params)
             mu = self.family.fitted(lin_pred)
             history = self._update_history(wls_results, mu, history)
-            self.scale = 1
             if endog.squeeze().ndim == 1 and np.allclose(mu - endog, 0):
                 msg = "Perfect separation detected, results not available"
                 raise PerfectSeparationError(msg)
