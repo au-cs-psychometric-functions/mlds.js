@@ -104,17 +104,7 @@ class Binomial():
         return (y + .5)/2
 
     def initialize(self, endog, freq_weights):
-        if endog.ndim > 1 and endog.shape[1] > 2:
-            raise ValueError('endog has more than 2 columns. The Binomial '
-                             'link supports either a single response variable '
-                             'or a paired response variable.')
-        elif endog.ndim > 1 and endog.shape[1] > 1:
-            y = endog[:, 0]
-            # overwrite self.freq_weights for deviance below
-            self.n = endog.sum(1)
-            return y*1./self.n, self.n
-        else:
-            return endog, np.ones(endog.shape[0])
+        return endog, np.ones(endog.shape[0])
 
     def weights(self, mu):
         p = default_clip(mu / self.n)
@@ -177,10 +167,6 @@ class GLM():
         self.endog = np.asarray(endog)
         self.exog = np.asarray(exog)
 
-        # store keys for extras if we need to recreate model instance
-        # we do not need 'missing', maybe we need 'hasconst'
-        self._init_keys = []
-
         self.df_model = np.linalg.matrix_rank(self.exog) - 1
         self.wnobs = self.exog.shape[0]
         self.df_resid = self.exog.shape[0] - self.df_model - 1
@@ -193,11 +179,7 @@ class GLM():
 
         self.nobs = self.endog.shape[0]
 
-        # register kwds for __init__, offset and exposure are added by super
-        self._init_keys.append('family')
-
         self.endog, self.n_trials = self.family.initialize(self.endog, self.freq_weights)
-        self._init_keys.append('n_trials')
 
     def _update_history(self, tmp_result, mu, history):
         history['params'].append(tmp_result.params)
