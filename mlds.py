@@ -156,9 +156,22 @@ def _check_convergence(criterion, iteration, atol, rtol):
                        atol=atol, rtol=rtol)
 
 class GLM():
-    _formula_max_endog = 2
+    def __init__(self, endog, exog, linkname='probit'):
+        self.linkname = linkname
+        link = None
+        if linkname == 'logit':
+            link = logit()
+        elif linkname == 'probit':
+            link = probit()
+        elif linkname == 'cauchy':
+            link = cauchy()
+        elif linkname == 'log':
+            link = log()
+        elif linkname == 'cloglog':
+            link = cloglog()
+        else:
+            raise Exception('Invalid Link Name')
 
-    def __init__(self, endog, exog, **kwargs):
         missing = 'none'
         hasconst = None
 
@@ -166,22 +179,19 @@ class GLM():
         exog = np.asarray(exog)
         self.data = ModelData(endog, exog=exog, missing=missing, hasconst=hasconst)
 
-        self.k_constant = self.data.k_constant
         self.exog = self.data.exog
         self.endog = self.data.endog
         self._data_attr = []
         self._data_attr.extend(['exog', 'endog', 'data.exog', 'data.endog'])
-        if 'formula' not in kwargs:  # will not be able to unpickle without these
-            self._data_attr.extend(['data.orig_endog', 'data.orig_exog'])
         # store keys for extras if we need to recreate model instance
         # we do not need 'missing', maybe we need 'hasconst'
-        self._init_keys = list(kwargs.keys())
+        self._init_keys = []
 
         self.df_model = np.linalg.matrix_rank(self.exog) - 1
         self.wnobs = self.exog.shape[0]
         self.df_resid = self.exog.shape[0] - self.df_model - 1
 
-        self.family = Binomial(probit())
+        self.family = Binomial(link)
 
         self.freq_weights = np.ones(len(endog))
         self.var_weights = np.ones(len(endog))
@@ -249,7 +259,7 @@ class GLM():
         wls_results = wls_model.fit(method='pinv')
 
         logLike = self.family.loglike(self.endog, self.mu, var_weights=self.var_weights, freq_weights=self.freq_weights, scale=self.scale)
-        return Summary('probit', wls_results.params, self.scale, logLike)
+        return Summary(self.linkname, wls_results.params, self.scale, logLike)
 
 class Summary():
     def __init__(self, link, params, scale, loglike):
