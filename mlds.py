@@ -236,22 +236,9 @@ def _check_convergence(criterion, iteration, atol, rtol):
 class GLM():
     _formula_max_endog = 2
 
-    def __init__(self, endog, exog, family=None, freq_weights=None, var_weights=None,
-                 missing='none', **kwargs):
-        if freq_weights is not None:
-            freq_weights = np.asarray(freq_weights)
-        if var_weights is not None:
-            var_weights = np.asarray(var_weights)
-
-        self.freq_weights = freq_weights
-        self.var_weights = var_weights
-
-        kwargs['missing'] = missing
-        kwargs['freq_weights'] = freq_weights
-        kwargs['var_weights'] = var_weights
-
-        missing = kwargs.pop('missing', 'none')
-        hasconst = kwargs.pop('hasconst', None)
+    def __init__(self, endog, exog, family=None, **kwargs):
+        missing = 'none'
+        hasconst = None
         self.data = self._handle_data(endog, exog, missing, hasconst,
                                       **kwargs)
         self.k_constant = self.data.k_constant
@@ -264,13 +251,16 @@ class GLM():
         # store keys for extras if we need to recreate model instance
         # we do not need 'missing', maybe we need 'hasconst'
         self._init_keys = list(kwargs.keys())
-        if hasconst is not None:
-            self._init_keys.append('hasconst')
 
-        self.initialize()
+        self.df_model = np.linalg.matrix_rank(self.exog) - 1
+        self.wnobs = self.exog.shape[0]
+        self.df_resid = self.exog.shape[0] - self.df_model - 1
 
-        self._check_inputs(family, self.endog,
-                           self.freq_weights, self.var_weights)
+        self.family = Binomial(probit())
+
+        self.freq_weights = np.ones((endog.shape[0]))
+        self.var_weights = np.ones((endog.shape[0]))
+        self.iweights = np.asarray(self.freq_weights * self.var_weights)
 
         self.nobs = self.endog.shape[0]
 
@@ -281,21 +271,8 @@ class GLM():
         # register kwds for __init__, offset and exposure are added by super
         self._init_keys.append('family')
 
-        self._setup_binomial()
-        # internal usage for recreating a model
-        if 'n_trials' in kwargs:
-            self.n_trials = kwargs['n_trials']
-
-    def initialize(self):
-        self.df_model = np.linalg.matrix_rank(self.exog) - 1
-
-        if (self.freq_weights is not None) and \
-           (self.freq_weights.shape[0] == self.endog.shape[0]):
-            self.wnobs = self.freq_weights.sum()
-            self.df_resid = self.wnobs - self.df_model - 1
-        else:
-            self.wnobs = self.exog.shape[0]
-            self.df_resid = self.exog.shape[0] - self.df_model - 1
+        self.endog, self.n_trials = self.family.initialize(self.endog, self.freq_weights)
+        self._init_keys.append('n_trials')
 
     def _handle_data(self, endog, exog, missing, hasconst, **kwargs):
         data = handle_data(endog, exog, missing, hasconst, **kwargs)
@@ -319,40 +296,6 @@ class GLM():
     def exog_names(self):
         return self.data.xnames
 
-    def _check_inputs(self, family, endog, freq_weights, var_weights):
-        if family is None:
-            family = Binomial()
-        self.family = family
-
-        if freq_weights is not None:
-            if freq_weights.shape[0] != endog.shape[0]:
-                raise ValueError("freq weights not the same length as endog")
-            if len(freq_weights.shape) > 1:
-                raise ValueError("freq weights has too many dimensions")
-
-        # internal flag to store whether freq_weights were not None
-        self._has_freq_weights = (self.freq_weights is not None)
-        if self.freq_weights is None:
-            self.freq_weights = np.ones((endog.shape[0]))
-            # TODO: check do we want to keep None as sentinel for freq_weights
-
-        if np.shape(self.freq_weights) == () and self.freq_weights > 1:
-            self.freq_weights = (self.freq_weights *
-                                 np.ones((endog.shape[0])))
-
-        if var_weights is not None:
-            if var_weights.shape[0] != endog.shape[0]:
-                raise ValueError("var weights not the same length as endog")
-            if len(var_weights.shape) > 1:
-                raise ValueError("var weights has too many dimensions")
-
-        # internal flag to store whether var_weights were not None
-        self._has_var_weights = (var_weights is not None)
-        if var_weights is None:
-            self.var_weights = np.ones((endog.shape[0]))
-            # TODO: check do we want to keep None as sentinel for var_weights
-        self.iweights = np.asarray(self.freq_weights * self.var_weights)
-
     def loglike_mu(self, mu, scale=1.):
         scale = float_like(scale, "scale")
         return self.family.loglike(self.endog, mu, self.var_weights,
@@ -372,10 +315,6 @@ class GLM():
         history['params'].append(tmp_result.params)
         history['deviance'].append(self.family.deviance(self.endog, mu))
         return history
-
-    def _setup_binomial(self):
-        self.endog, self.n_trials = self.family.initialize(self.endog, self.freq_weights)
-        self._init_keys.append('n_trials')
 
     def fit(self):
         maxiter = 100
