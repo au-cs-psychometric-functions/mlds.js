@@ -286,8 +286,6 @@ class GLM():
         if 'n_trials' in kwargs:
             self.n_trials = kwargs['n_trials']
 
-        self.scaletype = None
-
     def initialize(self):
         self.df_model = np.linalg.matrix_rank(self.exog) - 1
 
@@ -365,7 +363,7 @@ class GLM():
         lin_pred = np.dot(self.exog, params)
         expval = self.family.link.inverse(lin_pred)
         if scale is None:
-            scale = self.estimate_scale(expval)
+            scale = 1
         llf = self.family.loglike(self.endog, expval, self.var_weights,
                                   self.freq_weights, scale)
         return llf
@@ -374,32 +372,6 @@ class GLM():
         history['params'].append(tmp_result.params)
         history['deviance'].append(self.family.deviance(self.endog, mu))
         return history
-
-    def estimate_scale(self, mu):
-        if not self.scaletype:
-            if isinstance(self.family, Binomial):
-                return 1.
-            else:
-                return self._estimate_x2_scale(mu)
-
-        if isinstance(self.scaletype, float):
-            return np.array(self.scaletype)
-
-        if isinstance(self.scaletype, str):
-            if self.scaletype.lower() == 'x2':
-                return self._estimate_x2_scale(mu)
-            elif self.scaletype.lower() == 'dev':
-                return (self.family.deviance(self.endog, mu) / (self.df_resid))
-            else:
-                raise ValueError("Scale %s with type %s not understood" %
-                                 (self.scaletype, type(self.scaletype)))
-        else:
-            raise ValueError("Scale %s with type %s not understood" %
-                             (self.scaletype, type(self.scaletype)))
-
-    def _estimate_x2_scale(self, mu):
-        resid = np.power(self.endog - mu, 2) * self.iweights
-        return np.sum(resid / self.family.variance(mu)) / self.df_resid
 
     def _setup_binomial(self):
         # this checks what kind of data is given for Binomial.
@@ -412,24 +384,8 @@ class GLM():
             self.n_trials = tmp[1]
             self._init_keys.append('n_trials')
 
-    def fit(self, start_params=None, maxiter=100, tol=1e-8,
-            scale=None, cov_type='nonrobust', cov_kwds=None, use_t=None,
+    def fit(self, start_params=None, maxiter=100, tol=1e-8, cov_type='nonrobust', cov_kwds=None, use_t=None,
             full_output=True, disp=False, max_start_irls=3, **kwargs):
-        if isinstance(scale, str):
-            scale = scale.lower()
-            if scale not in ("x2", "dev"):
-                raise ValueError(
-                    "scale must be either X2 or dev when a string."
-                )
-        elif scale is not None:
-            # GH-6627
-            try:
-                scale = float(scale)
-            except Exception as exc:
-                raise type(exc)(
-                    "scale must be a float if given and no a string."
-                )
-        self.scaletype = scale
 
         attach_wls = kwargs.pop('attach_wls', False)
         atol = kwargs.get('atol')
@@ -447,7 +403,7 @@ class GLM():
         else:
             lin_pred = np.dot(wlsexog, start_params)
             mu = self.family.fitted(lin_pred)
-        self.scale = self.estimate_scale(mu)
+        self.scale = 1
         dev = self.family.deviance(self.endog, mu)
         if np.isnan(dev):
             raise ValueError("The first guess on the deviance function "
@@ -463,7 +419,7 @@ class GLM():
         # params vector.
         if maxiter == 0:
             mu = self.family.fitted(lin_pred)
-            self.scale = self.estimate_scale(mu)
+            self.scale = 1
             wls_results = lm.RegressionResults(self, start_params, None)
             iteration = 0
         for iteration in range(maxiter):
@@ -477,7 +433,7 @@ class GLM():
             lin_pred = np.dot(self.exog, wls_results.params)
             mu = self.family.fitted(lin_pred)
             history = self._update_history(wls_results, mu, history)
-            self.scale = self.estimate_scale(mu)
+            self.scale = 1
             if endog.squeeze().ndim == 1 and np.allclose(mu - endog, 0):
                 msg = "Perfect separation detected, results not available"
                 raise PerfectSeparationError(msg)
