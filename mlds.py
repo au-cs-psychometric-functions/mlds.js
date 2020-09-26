@@ -299,12 +299,6 @@ class GLM():
             self.wnobs = self.exog.shape[0]
             self.df_resid = self.exog.shape[0] - self.df_model - 1
 
-    def _get_init_kwds(self):
-        kwds = dict(((key, getattr(self, key, None))
-                     for key in self._init_keys))
-
-        return kwds
-
     def _handle_data(self, endog, exog, missing, hasconst, **kwargs):
         data = handle_data(endog, exog, missing, hasconst, **kwargs)
         # kwargs arrays could have changed, easier to just attach here
@@ -360,14 +354,6 @@ class GLM():
             self.var_weights = np.ones((endog.shape[0]))
             # TODO: check do we want to keep None as sentinel for var_weights
         self.iweights = np.asarray(self.freq_weights * self.var_weights)
-
-    def _get_init_kwds(self):
-        # this is a temporary fixup because exposure has been transformed
-        # see #1609, copied from discrete_model.CountModel
-        kwds = super(GLM, self)._get_init_kwds()
-        if 'exposure' in kwds and kwds['exposure'] is not None:
-            kwds['exposure'] = np.exp(kwds['exposure'])
-        return kwds
 
     def loglike_mu(self, mu, scale=1.):
         scale = float_like(scale, "scale")
