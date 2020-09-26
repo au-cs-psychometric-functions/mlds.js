@@ -236,7 +236,7 @@ def _check_convergence(criterion, iteration, atol, rtol):
 class GLM():
     _formula_max_endog = 2
 
-    def __init__(self, endog, exog, family=None, **kwargs):
+    def __init__(self, endog, exog, **kwargs):
         missing = 'none'
         hasconst = None
         self.data = self._handle_data(endog, exog, missing, hasconst,
@@ -258,8 +258,8 @@ class GLM():
 
         self.family = Binomial(probit())
 
-        self.freq_weights = np.ones((endog.shape[0]))
-        self.var_weights = np.ones((endog.shape[0]))
+        self.freq_weights = np.ones(len(endog))
+        self.var_weights = np.ones(len(endog))
         self.iweights = np.asarray(self.freq_weights * self.var_weights)
 
         self.nobs = self.endog.shape[0]
@@ -287,14 +287,6 @@ class GLM():
             except KeyError:  # panel already pops keys in data handling
                 pass
         return data
-
-    @property
-    def endog_names(self):
-        return self.data.ynames
-
-    @property
-    def exog_names(self):
-        return self.data.xnames
 
     def loglike_mu(self, mu, scale=1.):
         scale = float_like(scale, "scale")
@@ -380,8 +372,33 @@ class Summary():
         print('logLik: {}'.format(self.loglike))
 
 def mlds(filename):
-    data = pd.read_table(filename, sep='\t')
-    summary = GLM(data['resp'], data.drop('resp', axis=1), family=Binomial(probit()), data=data).fit()
+    data = []
+    with open('data.txt', 'r') as f:
+        for line in f.readlines():
+            data.append(list(map(int, line.strip().split('\t'))))
+
+    for row in data:
+        if row[1] > row[3]:
+            row[1], row[3] = row[3], row[1]
+            row[0] = 1 - row[0]
+
+    mx = max(sum(data, []))
+    table = []
+    for row in data:
+        arr = [0] * mx
+        arr[row[1] - 1] = 1
+        arr[row[2] - 1] = -2
+        arr[row[3] - 1] = 1
+        arr[0] = row[0]
+        table.append(arr)
+
+    y = []
+    x = []
+    for row in table:
+        y.append(row[0])
+        x.append(row[1:])
+
+    summary = GLM(y, x, data=table).fit()
     summary.print()
 
 if __name__ == '__main__':
