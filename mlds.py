@@ -2,50 +2,11 @@ import pandas as pd
 import numpy as np
 import scipy.stats
 from scipy import special
-# from statsmodels.base.data import handle_data
-from statsmodels.base.data import ModelData, PandasData, PatsyData
-import statsmodels.tools.data as data_util
+from statsmodels.base.data import ModelData
 import statsmodels.regression._tools as reg_tools
 import statsmodels.regression.linear_model as lm
 
 FLOAT_EPS = np.finfo(float).eps
-
-def handle_data_class_factory(endog, exog):
-    """
-    Given inputs
-    """
-    if data_util._is_using_ndarray_type(endog, exog):
-        print('model')
-        klass = ModelData
-    elif data_util._is_using_pandas(endog, exog):
-        print('pandas')
-        klass = PandasData
-    elif data_util._is_using_patsy(endog, exog):
-        print('patsy')
-        klass = PatsyData
-    # keep this check last
-    elif data_util._is_using_ndarray(endog, exog):
-        print('model')
-        klass = ModelData
-    else:
-        raise ValueError('unrecognized data structures: %s / %s' %
-                         (type(endog), type(exog)))
-    return klass
-
-
-def handle_data(endog, exog, missing='none', hasconst=None, **kwargs):
-    # deal with lists and tuples up-front
-    if isinstance(endog, (list, tuple)):
-        print('endog')
-        endog = np.asarray(endog)
-    if isinstance(exog, (list, tuple)):
-        print('exog')
-        exog = np.asarray(exog)
-
-    klass = handle_data_class_factory(endog, exog)
-    return klass(endog, exog=exog, missing=missing, hasconst=hasconst,
-                 **kwargs)
-
 
 class Link(object):
     pass
@@ -239,8 +200,11 @@ class GLM():
     def __init__(self, endog, exog, **kwargs):
         missing = 'none'
         hasconst = None
-        self.data = self._handle_data(endog, exog, missing, hasconst,
-                                      **kwargs)
+
+        endog = np.asarray(endog)
+        exog = np.asarray(exog)
+        self.data = ModelData(endog, exog=exog, missing=missing, hasconst=hasconst)
+
         self.k_constant = self.data.k_constant
         self.exog = self.data.exog
         self.endog = self.data.endog
@@ -273,20 +237,6 @@ class GLM():
 
         self.endog, self.n_trials = self.family.initialize(self.endog, self.freq_weights)
         self._init_keys.append('n_trials')
-
-    def _handle_data(self, endog, exog, missing, hasconst, **kwargs):
-        data = handle_data(endog, exog, missing, hasconst, **kwargs)
-        # kwargs arrays could have changed, easier to just attach here
-        for key in kwargs:
-            print('kwargs')
-            if key in ['design_info', 'formula']:  # leave attached to data
-                continue
-            # pop so we do not start keeping all these twice or references
-            try:
-                setattr(self, key, data.__dict__.pop(key))
-            except KeyError:  # panel already pops keys in data handling
-                pass
-        return data
 
     def loglike_mu(self, mu, scale=1.):
         scale = float_like(scale, "scale")
@@ -398,7 +348,7 @@ def mlds(filename):
         y.append(row[0])
         x.append(row[1:])
 
-    summary = GLM(y, x, data=table).fit()
+    summary = GLM(y, x).fit()
     summary.print()
 
 if __name__ == '__main__':
