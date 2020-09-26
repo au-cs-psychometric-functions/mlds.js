@@ -391,7 +391,6 @@ class GLM():
         atol = kwargs.get('atol')
         rtol = kwargs.get('rtol', 0.)
         tol_criterion = kwargs.get('tol_criterion', 'deviance')
-        wls_method = kwargs.get('wls_method', 'lstsq')
         atol = tol if atol is None else atol
 
         endog = self.endog
@@ -415,13 +414,7 @@ class GLM():
         history = dict(params=[np.inf, start_params], deviance=[np.inf, dev])
         converged = False
         criterion = history[tol_criterion]
-        # This special case is used to get the likelihood for a specific
-        # params vector.
-        if maxiter == 0:
-            mu = self.family.fitted(lin_pred)
-            self.scale = 1
-            wls_results = lm.RegressionResults(self, start_params, None)
-            iteration = 0
+
         for iteration in range(maxiter):
             self.weights = (self.iweights * self.n_trials *
                             self.family.weights(mu))
@@ -429,7 +422,7 @@ class GLM():
             wls_mod = reg_tools._MinimalWLS(wlsendog, wlsexog,
                                             self.weights, check_endog=True,
                                             check_weights=True)
-            wls_results = wls_mod.fit(method=wls_method)
+            wls_results = wls_mod.fit(method='lstsq')
             lin_pred = np.dot(self.exog, wls_results.params)
             mu = self.family.fitted(lin_pred)
             history = self._update_history(wls_results, mu, history)
@@ -443,10 +436,8 @@ class GLM():
                 break
         self.mu = mu
 
-        if maxiter > 0:  # Only if iterative used
-            wls_method2 = 'pinv' if wls_method == 'lstsq' else wls_method
-            wls_model = lm.WLS(wlsendog, wlsexog, self.weights)
-            wls_results = wls_model.fit(method=wls_method2)
+        wls_model = lm.WLS(wlsendog, wlsexog, self.weights)
+        wls_results = wls_model.fit(method='pinv')
 
         logLike = self.family.loglike(self.endog, self.mu, var_weights=self.var_weights, freq_weights=self.freq_weights, scale=self.scale)
         return Summary('probit', wls_results.params, self.scale, logLike)
