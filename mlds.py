@@ -8,10 +8,7 @@ import statsmodels.regression.linear_model as lm
 
 FLOAT_EPS = np.finfo(float).eps
 
-class Link(object):
-    pass
-
-class Logit(Link):
+class logit():
     def _clean(self, p):
         return np.clip(p, FLOAT_EPS, 1. - FLOAT_EPS)
 
@@ -32,10 +29,10 @@ class Logit(Link):
         t = np.exp(z)
         return t/(1 + t)**2
 
-class logit(Logit):
-    pass
+class probit():
+    def _clean(self, p):
+        return np.clip(p, FLOAT_EPS, 1. - FLOAT_EPS)
 
-class CDFLink(Logit):
     def __init__(self, dbn=scipy.stats.norm):
         self.dbn = dbn
 
@@ -53,14 +50,11 @@ class CDFLink(Logit):
     def inverse_deriv(self, z):
         return 1/self.deriv(self.inverse(z))
 
-class probit(CDFLink):
-    pass
-
-class cauchy(CDFLink):
+class cauchy(probit):
     def __init__(self):
         super(cauchy, self).__init__(dbn=scipy.stats.cauchy)
 
-class Log(Link):
+class log():
     def _clean(self, x):
         return np.clip(x, FLOAT_EPS, np.inf)
 
@@ -78,11 +72,10 @@ class Log(Link):
     def inverse_deriv(self, z):
         return np.exp(z)
 
+class cloglog():
+    def _clean(self, p):
+        return np.clip(p, FLOAT_EPS, 1. - FLOAT_EPS)
 
-class log(Log):
-    pass
-
-class CLogLog(Logit):
     def __call__(self, p):
         p = self._clean(p)
         return np.log(-np.log(1 - p))
@@ -96,9 +89,6 @@ class CLogLog(Logit):
 
     def inverse_deriv(self, z):
         return np.exp(z - np.exp(z))
-
-class cloglog(CLogLog):
-    pass
 
 class BinomialVariance(object):
     def __init__(self, n=1):
@@ -120,8 +110,6 @@ class Binomial():
 
     def _setlink(self, link):
         self._link = link
-        if not isinstance(link, Link):
-            raise TypeError("The input should be a valid Link object.")
         if hasattr(self, "links"):
             validlink = max([isinstance(link, _) for _ in self.links])
             if not validlink:
