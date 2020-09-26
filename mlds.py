@@ -260,14 +260,8 @@ def _check_convergence(criterion, iteration, atol, rtol):
 class GLM():
     _formula_max_endog = 2
 
-    def __init__(self, endog, exog, family=None, offset=None,
-                 exposure=None, freq_weights=None, var_weights=None,
+    def __init__(self, endog, exog, family=None, freq_weights=None, var_weights=None,
                  missing='none', **kwargs):
-        if exposure is not None:
-            exposure = np.log(exposure)
-        if offset is not None:  # this should probably be done upstream
-            offset = np.asarray(offset)
-
         if freq_weights is not None:
             freq_weights = np.asarray(freq_weights)
         if var_weights is not None:
@@ -277,8 +271,6 @@ class GLM():
         self.var_weights = var_weights
 
         kwargs['missing'] = missing
-        kwargs['offset'] = offset
-        kwargs['exposure'] = exposure
         kwargs['freq_weights'] = freq_weights
         kwargs['var_weights'] = var_weights
 
@@ -301,18 +293,14 @@ class GLM():
 
         self.initialize()
 
-        self._check_inputs(family, self.offset, self.exposure, self.endog,
+        self._check_inputs(family, self.endog,
                            self.freq_weights, self.var_weights)
-        if offset is None:
-            delattr(self, 'offset')
-        if exposure is None:
-            delattr(self, 'exposure')
 
         self.nobs = self.endog.shape[0]
 
         # things to remove_data
         self._data_attr.extend(['weights', 'mu', 'freq_weights',
-                                'var_weights', 'iweights', '_offset_exposure',
+                                'var_weights', 'iweights',
                                 'n_trials'])
         # register kwds for __init__, offset and exposure are added by super
         self._init_keys.append('family')
@@ -321,15 +309,6 @@ class GLM():
         # internal usage for recreating a model
         if 'n_trials' in kwargs:
             self.n_trials = kwargs['n_trials']
-
-        # Construct a combined offset/exposure term.  Note that
-        # exposure has already been logged if present.
-        offset_exposure = 0.
-        if hasattr(self, 'offset'):
-            offset_exposure = self.offset
-        if hasattr(self, 'exposure'):
-            offset_exposure = offset_exposure + self.exposure
-        self._offset_exposure = offset_exposure
 
         self.scaletype = None
 
@@ -372,24 +351,10 @@ class GLM():
     def exog_names(self):
         return self.data.xnames
 
-    def _check_inputs(self, family, offset, exposure, endog, freq_weights,
-                      var_weights):
-
-        # Default family is Gaussian
+    def _check_inputs(self, family, endog, freq_weights, var_weights):
         if family is None:
             family = Binomial()
         self.family = family
-
-        if exposure is not None:
-            if not isinstance(self.family.link, Log):
-                raise ValueError("exposure can only be used with the log "
-                                 "link function")
-            elif exposure.shape[0] != endog.shape[0]:
-                raise ValueError("exposure is not the same length as endog")
-
-        if offset is not None:
-            if offset.shape[0] != endog.shape[0]:
-                raise ValueError("offset is not the same length as endog")
 
         if freq_weights is not None:
             if freq_weights.shape[0] != endog.shape[0]:
@@ -435,7 +400,7 @@ class GLM():
 
     def loglike(self, params, scale=None):
         scale = float_like(scale, "scale", optional=True)
-        lin_pred = np.dot(self.exog, params) + self._offset_exposure
+        lin_pred = np.dot(self.exog, params)
         expval = self.family.link.inverse(lin_pred)
         if scale is None:
             scale = self.estimate_scale(expval)
@@ -554,7 +519,7 @@ class GLM():
             mu = self.family.starting_mu(self.endog)
             lin_pred = self.family.predict(mu)
         else:
-            lin_pred = np.dot(wlsexog, start_params) + self._offset_exposure
+            lin_pred = np.dot(wlsexog, start_params)
             mu = self.family.fitted(lin_pred)
         self.scale = self.estimate_scale(mu)
         dev = self.family.deviance(self.endog, mu, self.var_weights,
@@ -579,14 +544,12 @@ class GLM():
         for iteration in range(maxiter):
             self.weights = (self.iweights * self.n_trials *
                             self.family.weights(mu))
-            wlsendog = (lin_pred + self.family.link.deriv(mu) * (self.endog-mu)
-                        - self._offset_exposure)
+            wlsendog = (lin_pred + self.family.link.deriv(mu) * (self.endog-mu))
             wls_mod = reg_tools._MinimalWLS(wlsendog, wlsexog,
                                             self.weights, check_endog=True,
                                             check_weights=True)
             wls_results = wls_mod.fit(method=wls_method)
             lin_pred = np.dot(self.exog, wls_results.params)
-            lin_pred += self._offset_exposure
             mu = self.family.fitted(lin_pred)
             history = self._update_history(wls_results, mu, history)
             self.scale = self.estimate_scale(mu)
