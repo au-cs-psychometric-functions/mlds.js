@@ -374,15 +374,8 @@ class GLM():
         return history
 
     def _setup_binomial(self):
-        # this checks what kind of data is given for Binomial.
-        # family will need a reference to endog if this is to be removed from
-        # preprocessing
-        self.n_trials = np.ones((self.endog.shape[0]))  # For binomial
-        if isinstance(self.family, Binomial):
-            tmp = self.family.initialize(self.endog, self.freq_weights)
-            self.endog = tmp[0]
-            self.n_trials = tmp[1]
-            self._init_keys.append('n_trials')
+        self.endog, self.n_trials = self.family.initialize(self.endog, self.freq_weights)
+        self._init_keys.append('n_trials')
 
     def fit(self):
         maxiter = 100
