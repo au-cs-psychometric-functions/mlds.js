@@ -8,6 +8,9 @@ import statsmodels.regression.linear_model as lm
 
 FLOAT_EPS = np.finfo(float).eps
 
+def default_clip(p):
+    return np.clip(p, FLOAT_EPS, 1 - FLOAT_EPS)
+
 class logit():
     def _clean(self, p):
         return np.clip(p, FLOAT_EPS, 1. - FLOAT_EPS)
@@ -90,45 +93,13 @@ class cloglog():
     def inverse_deriv(self, z):
         return np.exp(z - np.exp(z))
 
-class BinomialVariance(object):
-    def __init__(self, n=1):
-        self.n = n
-
-    def _clean(self, p):
-        return np.clip(p, FLOAT_EPS, 1 - FLOAT_EPS)
-
-    def __call__(self, mu):
-        p = self._clean(mu / self.n)
-        return p * (1 - p) * self.n
-
-    # TODO: inherit from super
-    def deriv(self, mu):
-        return 1 - 2*mu
-
 class Binomial():
-    links = [logit, probit, cauchy, log, cloglog]
-
-    def _setlink(self, link):
-        self._link = link
-        if hasattr(self, "links"):
-            validlink = max([isinstance(link, _) for _ in self.links])
-            if not validlink:
-                errmsg = "Invalid link for family, should be in %s. (got %s)"
-                raise ValueError(errmsg % (repr(self.links), link))
-
-    def _getlink(self):
-        return self._link
-
-    # link property for each family is a pointer to link instance
-    link = property(_getlink, _setlink, doc="Link function for family")
-
-    def __init__(self, link=None):  # , n=1.):
+    def __init__(self, link=None):
         if link is None:
             link = logit()
         self.n = 1
 
         self.link = link
-        self.variance = BinomialVariance(n=self.n)
 
     def starting_mu(self, y):
         return (y + .5)/2
@@ -147,7 +118,9 @@ class Binomial():
             return endog, np.ones(endog.shape[0])
 
     def weights(self, mu):
-        return 1. / (self.link.deriv(mu)**2 * self.variance(mu))
+        p = default_clip(mu / self.n)
+        variance = p * (1 - p) * self.n
+        return 1. / (self.link.deriv(mu)**2 * variance)
 
     def deviance(self, endog, mu):
         endog_mu = self._clean(endog / mu)
@@ -225,21 +198,6 @@ class GLM():
 
         self.endog, self.n_trials = self.family.initialize(self.endog, self.freq_weights)
         self._init_keys.append('n_trials')
-
-    def loglike_mu(self, mu, scale=1.):
-        scale = float_like(scale, "scale")
-        return self.family.loglike(self.endog, mu, self.var_weights,
-                                   self.freq_weights, scale)
-
-    def loglike(self, params, scale=None):
-        scale = float_like(scale, "scale", optional=True)
-        lin_pred = np.dot(self.exog, params)
-        expval = self.family.link.inverse(lin_pred)
-        if scale is None:
-            scale = 1
-        llf = self.family.loglike(self.endog, expval, self.var_weights,
-                                  self.freq_weights, scale)
-        return llf
 
     def _update_history(self, tmp_result, mu, history):
         history['params'].append(tmp_result.params)
