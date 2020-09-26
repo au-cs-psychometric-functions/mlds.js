@@ -32,7 +32,12 @@
     }
 
     const cloglog = () => {
-
+        const link = a => link.clean(a).map(e => Math.log(-1 * Math.log(1 - e)));
+        link.clean = a => clip(a, Number.EPSILON, 1 - Number.EPSILON);
+        link.inverse = a => a.map(e => 1 - Math.exp(-1 * Math.exp(e)));
+        link.derivative = a => link.clean(a).map(e => 1 / ((e - 1) * (Math.log(1 - e))));
+        link.inverseDerivative = a => a.map(e => Math.exp(e - Math.exp(e)));
+        return link;
     }
 
     const linkBuilder = function(link) {
