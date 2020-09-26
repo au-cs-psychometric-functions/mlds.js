@@ -10,87 +10,76 @@ FLOAT_EPS = np.finfo(float).eps
 def default_clip(p):
     return np.clip(p, FLOAT_EPS, 1 - FLOAT_EPS)
 
-class logit():
-    def _clean(self, p):
-        return np.clip(p, FLOAT_EPS, 1. - FLOAT_EPS)
-
-    def __call__(self, p):
-        p = self._clean(p)
+def logit():
+    def link(p):
+        p = default_clip(p)
         return np.log(p / (1. - p))
-
-    def inverse(self, z):
-        z = np.asarray(z)
+    def inverse(z):
+        z = np.assarray(z)
         t = np.exp(-z)
         return 1. / (1. + t)
-
-    def deriv(self, p):
-        p = self._clean(p)
+    def deriv(p):
+        p = default_clip(p)
         return 1. / (p * (1 - p))
-
-    def inverse_deriv(self, z):
+    def inverse_deriv(z):
         t = np.exp(z)
         return t/(1 + t)**2
+    link.inverse = inverse
+    link.deriv = deriv
+    link.inverse_deriv = inverse_deriv
+    return link
 
-class probit():
-    def _clean(self, p):
-        return np.clip(p, FLOAT_EPS, 1. - FLOAT_EPS)
+def probit(dbn=scipy.stats.norm):
+    def link(p):
+        p = default_clip(p)
+        return dbn.ppf(p)
+    def inverse(z):
+        return dbn.cdf(z)
+    def deriv(p):
+        p = default_clip(p)
+        return 1 / dbn.pdf(dbn.ppf(p))
+    def inverse_deriv(z):
+        return 1 / deriv(inverse(z))
+    link.inverse = inverse
+    link.deriv = deriv
+    link.inverse_deriv = inverse_deriv
+    return link
 
-    def __init__(self, dbn=scipy.stats.norm):
-        self.dbn = dbn
+def cauchy(dbn=scipy.stats.cauchy):
+    return probit(dbn)
 
-    def __call__(self, p):
-        p = self._clean(p)
-        return self.dbn.ppf(p)
-
-    def inverse(self, z):
-        return self.dbn.cdf(z)
-
-    def deriv(self, p):
-        p = self._clean(p)
-        return 1. / self.dbn.pdf(self.dbn.ppf(p))
-
-    def inverse_deriv(self, z):
-        return 1/self.deriv(self.inverse(z))
-
-class cauchy(probit):
-    def __init__(self):
-        super(cauchy, self).__init__(dbn=scipy.stats.cauchy)
-
-class log():
-    def _clean(self, x):
+def log():
+    def clean(x):
         return np.clip(x, FLOAT_EPS, np.inf)
-
-    def __call__(self, p, **extra):
-        x = self._clean(p)
+    def link(p, **extra):
+        x = clean(x)
         return np.log(x)
-
-    def inverse(self, z):
+    def inverse(z):
         return np.exp(z)
-
-    def deriv(self, p):
-        p = self._clean(p)
+    def deriv(p):
+        p = clean(p)
         return 1. / p
-
-    def inverse_deriv(self, z):
+    def inverse_deriv(z):
         return np.exp(z)
+    link.inverse = inverse
+    link.deriv = deriv
+    link.inverse_deriv = inverse_deriv
+    return link
 
-class cloglog():
-    def _clean(self, p):
-        return np.clip(p, FLOAT_EPS, 1. - FLOAT_EPS)
-
-    def __call__(self, p):
-        p = self._clean(p)
+def cloglog():
+    def link(p):
+        p = default_clip(p)
         return np.log(-np.log(1 - p))
-
-    def inverse(self, z):
+    def inverse(z):
         return 1 - np.exp(-np.exp(z))
-
-    def deriv(self, p):
-        p = self._clean(p)
+    def deriv(p):
+        p = default_clip(p)
         return 1. / ((p - 1) * (np.log(1 - p)))
-
-    def inverse_deriv(self, z):
+    def inverse_deriv(z):
         return np.exp(z - np.exp(z))
+    link.inverse = inverse
+    link.deriv = deriv
+    link.inverse_deriv = inverse_deriv
 
 class Binomial():
     def __init__(self, link=None):
