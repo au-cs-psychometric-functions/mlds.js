@@ -2,10 +2,24 @@ import pandas as pd
 import numpy as np
 import scipy.stats
 from scipy import special
-import statsmodels.regression._tools as reg_tools
-from statsmodels.tools.tools import pinv_extended
 
 FLOAT_EPS = np.finfo(float).eps
+
+def pinv_extended(x, rcond=1e-15):
+    x = np.asarray(x)
+    x = x.conjugate()
+    u, s, vt = np.linalg.svd(x, False)
+    s_orig = np.copy(s)
+    m = u.shape[0]
+    n = vt.shape[1]
+    cutoff = rcond * np.maximum.reduce(s)
+    for i in range(min(n, m)):
+        if s[i] > cutoff:
+            s[i] = 1./s[i]
+        else:
+            s[i] = 0.
+    return np.dot(np.transpose(vt), np.multiply(s[:, np.core.newaxis],
+                                               np.transpose(u)))
 
 def default_clip(p):
     return np.clip(p, FLOAT_EPS, 1 - FLOAT_EPS)
@@ -211,7 +225,7 @@ class GLM():
 
         wlsendog = np.asarray(wlsendog) * np.sqrt(self.weights)
         wlsexog = np.asarray(wlsexog) * np.sqrt(self.weights)[:, None]
-        wlsexog, _ = pinv_extended(wlsexog)
+        wlsexog = pinv_extended(wlsexog)
         wls_results = np.dot(wlsexog, wlsendog)
 
         logLike = self.family.loglike(self.endog, self.mu, var_weights=self.var_weights, freq_weights=self.freq_weights, scale=self.scale)
