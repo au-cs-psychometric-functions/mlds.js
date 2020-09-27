@@ -3,165 +3,9 @@ import numpy as np
 import scipy.stats
 from scipy import special
 import statsmodels.regression._tools as reg_tools
-import statsmodels.regression.linear_model as lm
 from statsmodels.tools.tools import pinv_extended
-from statsmodels.tools.decorators import (cache_readonly,
-                                          cache_writable)
-from statsmodels.tools.decorators import (cache_readonly,
-                                          cached_value, cached_data)
-import statsmodels.base.wrapper as wrap
-from statsmodels.base.data import handle_data
 
 FLOAT_EPS = np.finfo(float).eps
-
-class WLS():
-    def __init__(self, endog, exog=None, weights=1., **kwargs):
-        missing = kwargs.pop('missing', 'none')
-        hasconst = kwargs.pop('hasconst', None)
-
-        self.weights = np.array(weights)
-        if weights.shape == ():
-            if (missing == 'drop' and 'missing_idx' in kwargs and
-                    kwargs['missing_idx'] is not None):
-                # patsy may have truncated endog
-                weights = np.repeat(weights, len(kwargs['missing_idx']))
-            else:
-                weights = np.repeat(weights, len(endog))
-        # handle case that endog might be of len == 1
-        if len(weights) == 1:
-            weights = np.array([weights.squeeze()])
-        else:
-            weights = weights.squeeze()
-
-        self.data = self._handle_data(endog, exog, missing, hasconst,
-                                      **kwargs)
-        self.k_constant = self.data.k_constant
-        self.exog = self.data.exog
-        self.endog = self.data.endog
-        self._data_attr = []
-        self._data_attr.extend(['exog', 'endog', 'data.exog', 'data.endog'])
-        if 'formula' not in kwargs:  # will not be able to unpickle without these
-            self._data_attr.extend(['data.orig_endog', 'data.orig_exog'])
-        # store keys for extras if we need to recreate model instance
-        # we do not need 'missing', maybe we need 'hasconst'
-        self._init_keys = list(kwargs.keys())
-        if hasconst is not None:
-            self._init_keys.append('hasconst')
-
-        self.initialize()
-        self._data_attr.extend(['pinv_wexog', 'weights'])
-
-        nobs = self.exog.shape[0]
-        weights = self.weights
-        # Experimental normalization of weights
-        weights = weights / np.sum(weights) * nobs
-        if weights.size != nobs and weights.shape[0] != nobs:
-            raise ValueError('Weights must be scalar or same length as design')
-
-    def initialize(self):
-        self.wexog = self.whiten(self.exog)
-        self.wendog = self.whiten(self.endog)
-        # overwrite nobs from class Model:
-        self.nobs = float(self.wexog.shape[0])
-
-        self._df_model = None
-        self._df_resid = None
-        self.rank = None
-
-    @property
-    def df_model(self):
-        if self._df_model is None:
-            if self.rank is None:
-                self.rank = np.linalg.matrix_rank(self.exog)
-            self._df_model = float(self.rank - self.k_constant)
-        return self._df_model
-
-    @df_model.setter
-    def df_model(self, value):
-        self._df_model = value
-
-    @property
-    def df_resid(self):
-        if self._df_resid is None:
-            if self.rank is None:
-                self.rank = np.linalg.matrix_rank(self.exog)
-            self._df_resid = self.nobs - self.rank
-        return self._df_resid
-
-    @df_resid.setter
-    def df_resid(self, value):
-        self._df_resid = value
-
-    def _handle_data(self, endog, exog, missing, hasconst, **kwargs):
-        data = handle_data(endog, exog, missing, hasconst, **kwargs)
-        # kwargs arrays could have changed, easier to just attach here
-        for key in kwargs:
-            if key in ['design_info', 'formula']:  # leave attached to data
-                continue
-            # pop so we do not start keeping all these twice or references
-            try:
-                setattr(self, key, data.__dict__.pop(key))
-            except KeyError:  # panel already pops keys in data handling
-                pass
-        return data
-
-    def fit(self, method="pinv", cov_type='nonrobust', cov_kwds=None,
-            use_t=None, **kwargs):
-        if method == "pinv":
-            if not (hasattr(self, 'pinv_wexog') and
-                    hasattr(self, 'normalized_cov_params') and
-                    hasattr(self, 'rank')):
-
-                self.pinv_wexog, singular_values = pinv_extended(self.wexog)
-                self.normalized_cov_params = np.dot(
-                    self.pinv_wexog, np.transpose(self.pinv_wexog))
-
-                # Cache these singular values for use later.
-                self.wexog_singular_values = singular_values
-                self.rank = np.linalg.matrix_rank(np.diag(singular_values))
-
-            beta = np.dot(self.pinv_wexog, self.wendog)
-
-        elif method == "qr":
-            if not (hasattr(self, 'exog_Q') and
-                    hasattr(self, 'exog_R') and
-                    hasattr(self, 'normalized_cov_params') and
-                    hasattr(self, 'rank')):
-                Q, R = np.linalg.qr(self.wexog)
-                self.exog_Q, self.exog_R = Q, R
-                self.normalized_cov_params = np.linalg.inv(np.dot(R.T, R))
-
-                # Cache singular values from R.
-                self.wexog_singular_values = np.linalg.svd(R, 0, 0)
-                self.rank = np.linalg.matrix_rank(R)
-            else:
-                Q, R = self.exog_Q, self.exog_R
-
-            # used in ANOVA
-            self.effects = effects = np.dot(Q.T, self.wendog)
-            beta = np.linalg.solve(R, effects)
-        else:
-            raise ValueError('method has to be "pinv" or "qr"')
-
-        if self._df_model is None:
-            self._df_model = float(self.rank - self.k_constant)
-        if self._df_resid is None:
-            self.df_resid = self.nobs - self.rank
-
-        return beta
-        # lfit = RegressionResults(
-        #     self, beta,
-        #     normalized_cov_params=self.normalized_cov_params,
-        #     cov_type=cov_type, cov_kwds=cov_kwds, use_t=use_t,
-        #     **kwargs)
-        # return RegressionResultsWrapper(lfit)
-
-    def whiten(self, x):
-        x = np.asarray(x)
-        if x.ndim == 1:
-            return x * np.sqrt(self.weights)
-        elif x.ndim == 2:
-            return np.sqrt(self.weights)[:, None] * x
 
 def default_clip(p):
     return np.clip(p, FLOAT_EPS, 1 - FLOAT_EPS)
@@ -372,8 +216,10 @@ class GLM():
                 break
         self.mu = mu
 
-        wls_model = WLS(wlsendog, wlsexog, self.weights)
-        wls_results = wls_model.fit(method='pinv')
+        wlsendog = np.asarray(wlsendog) * np.sqrt(self.weights)
+        wlsexog = np.asarray(wlsexog) * np.sqrt(self.weights)[:, None]
+        wlsexog, _ = pinv_extended(wlsexog)
+        wls_results = np.dot(wlsexog, wlsendog)
 
         logLike = self.family.loglike(self.endog, self.mu, var_weights=self.var_weights, freq_weights=self.freq_weights, scale=self.scale)
         return Summary(self.linkname, wls_results, self.scale, logLike)
