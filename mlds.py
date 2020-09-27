@@ -170,8 +170,7 @@ class GLM():
 
         self.endog, self.n_trials = self.family.initialize(self.endog, self.freq_weights)
 
-    def _update_history(self, tmp_result, mu, history):
-        history['params'].append(tmp_result.params)
+    def _update_history(self, mu, history):
         history['deviance'].append(self.family.deviance(self.endog, mu))
         return history
 
@@ -190,8 +189,6 @@ class GLM():
         
         dev = self.family.deviance(self.endog, mu)
 
-        # first guess on the deviance is assumed to be scaled by 1.
-        # params are none to start, so they line up with the deviance
         history = dict(params=[np.inf, start_params], deviance=[np.inf, dev])
         converged = False
         criterion = history['deviance']
@@ -200,13 +197,15 @@ class GLM():
             self.weights = (self.iweights * self.n_trials *
                             self.family.weights(mu))
             wlsendog = (lin_pred + self.family.link.deriv(mu) * (self.endog-mu))
-            wls_mod = reg_tools._MinimalWLS(wlsendog, wlsexog,
-                                            self.weights, check_endog=True,
-                                            check_weights=True)
-            wls_results = wls_mod.fit(method='lstsq')
-            lin_pred = np.dot(self.exog, wls_results.params)
+
+            w_half = np.sqrt(self.weights)
+            mendog = w_half * wlsendog
+            mexog = np.asarray(w_half)[:, None] * wlsexog
+            wls_results, _, _, _ = np.linalg.lstsq(mexog, mendog, rcond=-1)
+
+            lin_pred = np.dot(self.exog, wls_results)
             mu = self.family.fitted(lin_pred)
-            history = self._update_history(wls_results, mu, history)
+            history = self._update_history(mu, history)
             if endog.squeeze().ndim == 1 and np.allclose(mu - endog, 0):
                 msg = "Perfect separation detected, results not available"
                 raise PerfectSeparationError(msg)
