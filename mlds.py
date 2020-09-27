@@ -170,10 +170,6 @@ class GLM():
 
         self.endog, self.n_trials = self.family.initialize(self.endog, self.freq_weights)
 
-    def _update_history(self, mu, history):
-        history['deviance'].append(self.family.deviance(self.endog, mu))
-        return history
-
     def fit(self):
         maxiter = 100
         atol = 1e-8
@@ -187,11 +183,9 @@ class GLM():
         lin_pred = self.family.predict(mu)
         self.scale = 1
         
-        dev = self.family.deviance(self.endog, mu)
-
-        history = dict(params=[np.inf, start_params], deviance=[np.inf, dev])
         converged = False
-        criterion = history['deviance']
+
+        dev = [np.inf, self.family.deviance(self.endog, mu)]
 
         for iteration in range(maxiter):
             self.weights = (self.iweights * self.n_trials *
@@ -205,11 +199,11 @@ class GLM():
 
             lin_pred = np.dot(self.exog, wls_results)
             mu = self.family.fitted(lin_pred)
-            history = self._update_history(mu, history)
+            dev.append(self.family.deviance(self.endog, mu))
             if endog.squeeze().ndim == 1 and np.allclose(mu - endog, 0):
                 msg = "Perfect separation detected, results not available"
                 raise PerfectSeparationError(msg)
-            converged = _check_convergence(criterion, iteration + 1, atol,
+            converged = _check_convergence(dev, iteration + 1, atol,
                                            rtol)
             if converged:
                 break
