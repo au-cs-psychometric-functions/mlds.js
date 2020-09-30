@@ -1,66 +1,34 @@
 (function(exports) {
-    const clip = (a, aMin, aMax) => a.map(e => a < aMin ? aMin : e > aMax ? aMax : e);
-
-    const defaultClip = a => clip(a, Number.EPSILON, 1 - Number.EPSILON);
-
-    const links = {
-        LOGIT: 'logit',
-        PROBIT: 'probit',
-        CAUCHY: 'cauchy',
-        LOG: 'log',
-        CLOGLOG: 'cloglog',
-    };
-
-    const logit = () => {
-        const link = a => link.clean(a).map(e => Math.log(e / (1 - e)));
-        link.clean = a => defaultClip(a);
-        link.inverse = a => a.map(e => 1 / (1 + e));
-        link.derivative = a => link.clean(a).map(e => 1 / (e * (1 - e)));
-        link.inverseDerivative = a => a.map(e => Math.exp(e)).map(e => e / Math.pow(1 + e, 2));
-        return link;
+    const GLM = function(y, x) {
+        console.log(x);
+        console.log(y);
     }
 
-    const probit = () => {
-    }
+    exports.mlds = function(data) {
+        data = data.map(row1 => {
+            if (row[1] > row[3]) {
+                [row[1], row[3]] = row[3], row[1];
+                row[0] = 1 - row[0];
+            }
+            return row;
+        });
 
-    const cauchy = () => {
-    }
+        mx = Math.max.apply(null, data.map(row => Math.max.apply(Math, row)));
+        data = data.map(row => {
+            const arr = Array.from({length: mx}, () => 0);
+            arr[row[1] - 1] = 1;
+            arr[row[2] - 1] = -2;
+            arr[row[3] - 1] = 1;
+            arr[0] = row[0];
+            return arr;
+        });
 
-    const log = () => {
-        const link = a => link.clean(a).map(e => Math.log(e));
-        link.clean = a => clip(a, Number.EPSILON, Number.POSITIVE_INFINITY);
-        link.inverse = a => a.map(e => Math.exp(e));
-        link.derivative = a => link.clean(a).map(e => 1 / e);
-        link.inverseDerivative = a => a.map(e => Math.exp(e));
-        return link;
-    }
+        y = data.map(row => (row[0]));
+        x = data.map(row => {
+            [, ...arr] = row;
+            return arr;
+        });
 
-    const cloglog = () => {
-        const link = a => link.clean(a).map(e => Math.log(-1 * Math.log(1 - e)));
-        link.clean = a => defaultClip(a);
-        link.inverse = a => a.map(e => 1 - Math.exp(-1 * Math.exp(e)));
-        link.derivative = a => link.clean(a).map(e => 1 / ((e - 1) * (Math.log(1 - e))));
-        link.inverseDerivative = a => a.map(e => Math.exp(e - Math.exp(e)));
-        return link;
-    }
-
-    const linkBuilder = function(link) {
-        switch (link) {
-            case links.LOGIT:
-                return logit();
-            case links.PROBIT:
-                return probit();
-            case links.CAUCHY:
-                return cauchy();
-            case links.LOG:
-                return log();
-            case links.CLOGLOG:
-                return cloglog();
-        }
-    }
-
-    exports.test = function() {
-        const logit = linkBuilder('logit');
-        console.log(logit([5]));
+        return GLM(y, x);
     }
 })(this);
