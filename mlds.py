@@ -5,14 +5,14 @@ from scipy import special
 FLOAT_EPS = np.finfo(float).eps
 
 def default_clip(p):
-    return np.clip(p, FLOAT_EPS, 1 - FLOAT_EPS)
+    return np.asarray([max(FLOAT_EPS, min(1 - FLOAT_EPS, e)) for e in p])
 
 def logit():
     def link(p):
         p = default_clip(p)
         return np.log(p / (1. - p))
     def inverse(z):
-        z = np.assarray(z)
+        z = np.asarray(z)
         t = np.exp(-z)
         return 1. / (1. + t)
     def deriv(p):
@@ -47,7 +47,7 @@ def cauchy(dbn=scipy.stats.cauchy):
 
 def log():
     def clean(x):
-        return np.clip(x, FLOAT_EPS, np.inf)
+        return np.asarray([max(FLOAT_EPS, min(float('inf'), e)) for e in p])
     def link(p, **extra):
         x = clean(x)
         return np.log(x)
@@ -154,12 +154,6 @@ class GLM():
         self.exog = np.asarray(exog)
 
         self.family = Binomial(link)
-
-        # self.freq_weights = np.ones(len(endog))
-        # self.var_weights = np.ones(len(endog))
-        # self.iweights = np.asarray(self.freq_weights * self.var_weights)
-        # self.nobs = self.endog.shape[0]
-
         self.endog = self.family.initialize(self.endog)
 
     def fit(self):
