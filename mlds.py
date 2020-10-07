@@ -1,4 +1,3 @@
-import pandas as pd
 import numpy as np
 import scipy.stats
 from scipy import special
@@ -90,8 +89,8 @@ class Binomial():
     def starting_mu(self, y):
         return (y + .5)/2
 
-    def initialize(self, endog, freq_weights):
-        return endog, np.ones(endog.shape[0])
+    def initialize(self, endog):
+        return endog
 
     def weights(self, mu):
         p = default_clip(mu / self.n)
@@ -111,21 +110,21 @@ class Binomial():
     def predict(self, mu):
         return self.link(mu)
 
-    def loglike(self, endog, mu, var_weights=1., freq_weights=1., scale=1.):
-        ll_obs = self.loglike_obs(endog, mu, var_weights, scale)
-        return np.sum(ll_obs * freq_weights)
+    def loglike(self, endog, mu):
+        ll_obs = self.loglike_obs(endog, mu)
+        return np.sum(ll_obs)
 
     def _clean(self, x):
         return np.clip(x, FLOAT_EPS, np.inf)
 
-    def loglike_obs(self, endog, mu, var_weights=1., scale=1.):
+    def loglike_obs(self, endog, mu):
         n = self.n     # Number of trials
         y = endog * n  # Number of successes
 
         # note that mu is still in (0,1), i.e. not converted back
         return (special.gammaln(n + 1) - special.gammaln(y + 1) -
                 special.gammaln(n - y + 1) + y * np.log(mu / (1 - mu)) +
-                n * np.log(1 - mu)) * var_weights
+                n * np.log(1 - mu))
 
 def _check_convergence(criterion, iteration, atol, rtol):
     return np.allclose(criterion[iteration], criterion[iteration + 1],
@@ -154,19 +153,14 @@ class GLM():
         self.endog = np.asarray(endog)
         self.exog = np.asarray(exog)
 
-        self.df_model = np.linalg.matrix_rank(self.exog) - 1
-        self.wnobs = self.exog.shape[0]
-        self.df_resid = self.exog.shape[0] - self.df_model - 1
-
         self.family = Binomial(link)
 
-        self.freq_weights = np.ones(len(endog))
-        self.var_weights = np.ones(len(endog))
-        self.iweights = np.asarray(self.freq_weights * self.var_weights)
+        # self.freq_weights = np.ones(len(endog))
+        # self.var_weights = np.ones(len(endog))
+        # self.iweights = np.asarray(self.freq_weights * self.var_weights)
+        # self.nobs = self.endog.shape[0]
 
-        self.nobs = self.endog.shape[0]
-
-        self.endog, self.n_trials = self.family.initialize(self.endog, self.freq_weights)
+        self.endog = self.family.initialize(self.endog)
 
     def fit(self):
         maxiter = 100
@@ -179,15 +173,13 @@ class GLM():
         start_params = np.zeros(self.exog.shape[1])
         mu = self.family.starting_mu(self.endog)
         lin_pred = self.family.predict(mu)
-        self.scale = 1
         
         converged = False
 
         dev = [np.inf, self.family.deviance(self.endog, mu)]
 
         for iteration in range(maxiter):
-            self.weights = (self.iweights * self.n_trials *
-                            self.family.weights(mu))
+            self.weights = self.family.weights(mu)
             wlsendog = (lin_pred + self.family.link.deriv(mu) * (self.endog-mu))
 
             w_half = np.sqrt(self.weights)
@@ -212,14 +204,13 @@ class GLM():
         wlsexog = np.linalg.pinv(wlsexog, rcond=1e-15)
         wls_results = np.dot(wlsexog, wlsendog)
 
-        logLike = self.family.loglike(self.endog, self.mu, var_weights=self.var_weights, freq_weights=self.freq_weights, scale=self.scale)
-        return Summary(self.linkname, wls_results, self.scale, logLike)
+        logLike = self.family.loglike(self.endog, self.mu)
+        return Summary(self.linkname, wls_results, logLike)
 
 class Summary():
-    def __init__(self, link, params, scale, loglike):
+    def __init__(self, link, params, loglike):
         self.link = link
         self.params = [0] + params
-        self.scale = scale
         self.loglike = loglike
 
     def print(self):
@@ -228,7 +219,6 @@ class Summary():
         for param in self.params:
             print(param)
         print()
-        print('sigma: {}'.format(self.scale))
         print('logLik: {}'.format(self.loglike))
 
 def mlds(filename):
