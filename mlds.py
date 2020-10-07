@@ -130,25 +130,6 @@ def cdf(x):
 def pdf(x):
     return (1/s2pi)*math.exp(-x*x/2)
 
-def logit():
-    def link(p):
-        p = default_clip(p)
-        return np.log(p / (1. - p))
-    def inverse(z):
-        z = np.asarray(z)
-        t = np.exp(-z)
-        return 1. / (1. + t)
-    def deriv(p):
-        p = default_clip(p)
-        return 1. / (p * (1 - p))
-    def inverse_deriv(z):
-        t = np.exp(z)
-        return t/(1 + t)**2
-    link.inverse = inverse
-    link.deriv = deriv
-    link.inverse_deriv = inverse_deriv
-    return link
-
 def probit():
     def link(p):
         p = default_clip(p)
@@ -164,39 +145,6 @@ def probit():
     link.deriv = deriv
     link.inverse_deriv = inverse_deriv
     return link
-
-def log():
-    def clean(x):
-        return np.asarray([max(FLOAT_EPS, min(float('inf'), e)) for e in p])
-    def link(p, **extra):
-        x = clean(x)
-        return np.log(x)
-    def inverse(z):
-        return np.exp(z)
-    def deriv(p):
-        p = clean(p)
-        return 1. / p
-    def inverse_deriv(z):
-        return np.exp(z)
-    link.inverse = inverse
-    link.deriv = deriv
-    link.inverse_deriv = inverse_deriv
-    return link
-
-def cloglog():
-    def link(p):
-        p = default_clip(p)
-        return np.log(-np.log(1 - p))
-    def inverse(z):
-        return 1 - np.exp(-np.exp(z))
-    def deriv(p):
-        p = default_clip(p)
-        return 1. / ((p - 1) * (np.log(1 - p)))
-    def inverse_deriv(z):
-        return np.exp(z - np.exp(z))
-    link.inverse = inverse
-    link.deriv = deriv
-    link.inverse_deriv = inverse_deriv
 
 class Binomial():
     def __init__(self, link=None):
