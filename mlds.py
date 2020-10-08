@@ -157,60 +157,52 @@ def deviance(y, mu):
 def check_convergence(criterion, iteration, atol, rtol):
     return np.allclose(criterion[iteration], criterion[iteration + 1], atol=atol, rtol=rtol)
 
-class GLM():
-    def __init__(self, y, x):
-        self.linkname = 'probit'
-        self.link = probit()
+def glm(y, x):
+    link = probit()
+    y = np.asarray(y)
+    x = np.asarray(x)
 
-        self.y = np.asarray(y)
-        self.x = np.asarray(x)
+    maxiter = 100
+    atol = 1e-8
+    rtol = 0
 
-        # self.family = Binomial(self.link)
+    wls_x = x
 
-    def fit(self):
-        maxiter = 100
-        atol = 1e-8
-        rtol = 0
+    mu = np.asarray([(e + .5) / 2 for e in y])
+    lin_pred = link(mu)
+    
+    converged = False
 
-        y = self.y
-        wls_x = self.x
+    dev = [np.inf, deviance(y, mu)]
 
-        mu = np.asarray([(e + .5) / 2 for e in self.y])
-        lin_pred = self.link(mu)
-        
-        converged = False
+    for iteration in range(maxiter):
+        p = default_clip(mu)
+        variance = p * (1 - p)
+        weights = 1. / (link.deriv(mu)**2 * variance)
 
-        dev = [np.inf, deviance(self.y, mu)]
+        wls_y = (lin_pred + link.deriv(mu) * (y - mu))
 
-        for iteration in range(maxiter):
-            p = default_clip(mu)
-            variance = p * (1 - p)
-            self.weights = 1. / (self.link.deriv(mu)**2 * variance)
+        w_half = np.sqrt(weights)
+        m_y = w_half * wls_y
+        m_x = np.asarray(w_half)[:, None] * wls_x
+        wls_results, _, _, _ = np.linalg.lstsq(m_x, m_y, rcond=-1)
 
-            wls_y = (lin_pred + self.link.deriv(mu) * (self.y - mu))
+        lin_pred = np.dot(x, wls_results)
+        mu = link.inverse(lin_pred)
+        dev.append(deviance(y, mu))
+        converged = check_convergence(dev, iteration + 1, atol, rtol)
+        if converged:
+            break
 
-            w_half = np.sqrt(self.weights)
-            m_y = w_half * wls_y
-            m_x = np.asarray(w_half)[:, None] * wls_x
-            wls_results, _, _, _ = np.linalg.lstsq(m_x, m_y, rcond=-1)
+    wls_y = np.asarray(wls_y) * np.sqrt(weights)
+    wls_x = np.asarray(wls_x) * np.sqrt(weights)[:, None]
+    wls_x = np.linalg.pinv(wls_x, rcond=1e-15)
+    wls_results = np.dot(wls_x, wls_y)
 
-            lin_pred = np.dot(self.x, wls_results)
-            mu = self.link.inverse(lin_pred)
-            dev.append(deviance(self.y, mu))
-            converged = check_convergence(dev, iteration + 1, atol, rtol)
-            if converged:
-                break
-        self.mu = mu
-
-        wls_y = np.asarray(wls_y) * np.sqrt(self.weights)
-        wls_x = np.asarray(wls_x) * np.sqrt(self.weights)[:, None]
-        wls_x = np.linalg.pinv(wls_x, rcond=1e-15)
-        wls_results = np.dot(wls_x, wls_y)
-
-        logLike = sum([math.lgamma(2) - math.lgamma(self.y[i] + 1) -
-                math.lgamma(2 - self.y[i]) + self.y[i] * math.log(self.mu[i] / (1 - self.mu[i])) +
-                math.log(1 - self.mu[i]) for i in range(len(self.y))])
-        return Summary(self.linkname, wls_results, logLike)
+    logLike = sum([math.lgamma(2) - math.lgamma(y[i] + 1) -
+            math.lgamma(2 - y[i]) + y[i] * math.log(mu[i] / (1 - mu[i])) +
+            math.log(1 - mu[i]) for i in range(len(y))])
+    return Summary('probit', wls_results, logLike)
 
 class Summary():
     def __init__(self, link, params, loglike):
@@ -253,7 +245,7 @@ def mlds(filename):
         y.append(row[0])
         x.append(row[1:])
 
-    summary = GLM(y, x).fit()
+    summary = glm(y, x)
     summary.print()
 
 if __name__ == '__main__':
