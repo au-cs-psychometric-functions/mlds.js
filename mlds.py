@@ -149,10 +149,9 @@ def probit():
     return link
 
 def deviance(y, mu):
-    y_mu = inf_clip(y / mu)
-    n_y_mu = inf_clip((1. - y) / (1. - mu))
-    resid_dev = y * np.log(y_mu) + (1 - y) * np.log(n_y_mu)
-    return np.sum(2 * resid_dev)    
+    y_mu = inf_clip([y[i] / mu[i] for i in range(len(y))])
+    n_y_mu = inf_clip([(1. - y[i]) / (1. - mu[i]) for i in range(len(y))])
+    return sum([2 * (y[i] * math.log(y_mu[i]) + (1 - y[i]) * math.log(n_y_mu[i])) for i in range(len(y))])
 
 def check_convergence(criterion, iteration, atol, rtol):
     return np.allclose(criterion[iteration], criterion[iteration + 1], atol=atol, rtol=rtol)
@@ -161,10 +160,6 @@ def glm(y, x):
     link = probit()
     y = np.asarray(y)
     x = np.asarray(x)
-
-    maxiter = 100
-    atol = 1e-8
-    rtol = 0
 
     wls_x = x
 
@@ -175,7 +170,7 @@ def glm(y, x):
 
     dev = [np.inf, deviance(y, mu)]
 
-    for iteration in range(maxiter):
+    for iteration in range(100):
         p = default_clip(mu)
         variance = p * (1 - p)
         weights = 1. / (link.deriv(mu)**2 * variance)
@@ -190,7 +185,7 @@ def glm(y, x):
         lin_pred = np.dot(x, wls_results)
         mu = link.inverse(lin_pred)
         dev.append(deviance(y, mu))
-        converged = check_convergence(dev, iteration + 1, atol, rtol)
+        converged = check_convergence(dev, iteration + 1, 1e-8, 0)
         if converged:
             break
 
@@ -199,10 +194,10 @@ def glm(y, x):
     wls_x = np.linalg.pinv(wls_x, rcond=1e-15)
     wls_results = np.dot(wls_x, wls_y)
 
-    logLike = sum([math.lgamma(2) - math.lgamma(y[i] + 1) -
+    log_like = sum([math.lgamma(2) - math.lgamma(y[i] + 1) -
             math.lgamma(2 - y[i]) + y[i] * math.log(mu[i] / (1 - mu[i])) +
             math.log(1 - mu[i]) for i in range(len(y))])
-    return Summary('probit', wls_results, logLike)
+    return Summary('probit', wls_results, log_like)
 
 class Summary():
     def __init__(self, link, params, loglike):
