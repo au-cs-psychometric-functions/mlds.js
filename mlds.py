@@ -6,6 +6,9 @@ FLOAT_EPS = np.finfo(float).eps
 def default_clip(p):
     return np.asarray([max(FLOAT_EPS, min(1 - FLOAT_EPS, e)) for e in p])
 
+def inf_clip(p):
+    return np.asarray([max(FLOAT_EPS, min(float('inf'), e)) for e in p])
+
 s2pi = 2.50662827463100050242E0
 
 P0 = [
@@ -145,58 +148,24 @@ def probit():
     link.inverse_deriv = inverse_deriv
     return link
 
-class Binomial():
-    def __init__(self, link=None):
-        if link is None:
-            link = logit()
-        self.link = link
+def deviance(y, mu):
+    y_mu = inf_clip(y / mu)
+    n_y_mu = inf_clip((1. - y) / (1. - mu))
+    resid_dev = y * np.log(y_mu) + (1 - y) * np.log(n_y_mu)
+    return np.sum(2 * resid_dev)    
 
-    def starting_mu(self, y):
-        return (y + .5)/2
-
-    def weights(self, mu):
-        p = default_clip(mu)
-        variance = p * (1 - p)
-        return 1. / (self.link.deriv(mu)**2 * variance)
-
-    def deviance(self, endog, mu):
-        endog_mu = self._clean(endog / mu)
-        n_endog_mu = self._clean((1. - endog) / (1. - mu))
-        resid_dev = endog * np.log(endog_mu) + (1 - endog) * np.log(n_endog_mu)
-        return np.sum(2 * resid_dev)
-
-    def fitted(self, lin_pred):
-        fits = self.link.inverse(lin_pred)
-        return fits
-
-    def predict(self, mu):
-        return self.link(mu)
-
-    def loglike(self, endog, mu):
-        ll_obs = self.loglike_obs(endog, mu)
-        return np.sum(ll_obs)
-
-    def _clean(self, x):
-        return np.asarray([max(FLOAT_EPS, min(float('inf'), e)) for e in x])
-
-    def loglike_obs(self, endog, mu):
-        return [math.lgamma(2) - math.lgamma(endog[i] + 1) -
-                math.lgamma(2 - endog[i]) + endog[i] * math.log(mu[i] / (1 - mu[i])) +
-                math.log(1 - mu[i]) for i in range(len(endog))]
-
-def _check_convergence(criterion, iteration, atol, rtol):
-    return np.allclose(criterion[iteration], criterion[iteration + 1],
-                       atol=atol, rtol=rtol)
+def check_convergence(criterion, iteration, atol, rtol):
+    return np.allclose(criterion[iteration], criterion[iteration + 1], atol=atol, rtol=rtol)
 
 class GLM():
     def __init__(self, y, x):
         self.linkname = 'probit'
-        link = probit()
+        self.link = probit()
 
         self.y = np.asarray(y)
         self.x = np.asarray(x)
 
-        self.family = Binomial(link)
+        # self.family = Binomial(self.link)
 
     def fit(self):
         maxiter = 100
@@ -207,15 +176,18 @@ class GLM():
         wls_x = self.x
 
         mu = np.asarray([(e + .5) / 2 for e in self.y])
-        lin_pred = self.family.predict(mu)
+        lin_pred = self.link(mu)
         
         converged = False
 
-        dev = [np.inf, self.family.deviance(self.y, mu)]
+        dev = [np.inf, deviance(self.y, mu)]
 
         for iteration in range(maxiter):
-            self.weights = self.family.weights(mu)
-            wls_y = (lin_pred + self.family.link.deriv(mu) * (self.y - mu))
+            p = default_clip(mu)
+            variance = p * (1 - p)
+            self.weights = 1. / (self.link.deriv(mu)**2 * variance)
+
+            wls_y = (lin_pred + self.link.deriv(mu) * (self.y - mu))
 
             w_half = np.sqrt(self.weights)
             m_y = w_half * wls_y
@@ -223,9 +195,9 @@ class GLM():
             wls_results, _, _, _ = np.linalg.lstsq(m_x, m_y, rcond=-1)
 
             lin_pred = np.dot(self.x, wls_results)
-            mu = self.family.fitted(lin_pred)
-            dev.append(self.family.deviance(self.y, mu))
-            converged = _check_convergence(dev, iteration + 1, atol, rtol)
+            mu = self.link.inverse(lin_pred)
+            dev.append(deviance(self.y, mu))
+            converged = check_convergence(dev, iteration + 1, atol, rtol)
             if converged:
                 break
         self.mu = mu
@@ -235,7 +207,9 @@ class GLM():
         wls_x = np.linalg.pinv(wls_x, rcond=1e-15)
         wls_results = np.dot(wls_x, wls_y)
 
-        logLike = self.family.loglike(self.y, self.mu)
+        logLike = sum([math.lgamma(2) - math.lgamma(self.y[i] + 1) -
+                math.lgamma(2 - self.y[i]) + self.y[i] * math.log(self.mu[i] / (1 - self.mu[i])) +
+                math.log(1 - self.mu[i]) for i in range(len(self.y))])
         return Summary(self.linkname, wls_results, logLike)
 
 class Summary():
