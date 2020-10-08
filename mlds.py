@@ -1,6 +1,5 @@
 import math
 import numpy as np
-from scipy import special
 
 FLOAT_EPS = np.finfo(float).eps
 
@@ -112,7 +111,7 @@ def polevl(x, coef):
         accum = x * accum + c
     return accum
 
-def erfcc(x):
+def erf(x):
     z = abs(x)
     t = 1. / (1. + 0.5*z)
     r = t * math.exp(-z*z-1.26551223+t*(1.00002368+t*(.37409196+
@@ -125,7 +124,7 @@ def erfcc(x):
         return 2. - r
 
 def cdf(x):
-    return 1. - 0.5*erfcc(x/(2**0.5))
+    return 1. - 0.5*erf(x/(2**0.5))
 
 def pdf(x):
     return (1/s2pi)*math.exp(-x*x/2)
@@ -150,8 +149,6 @@ class Binomial():
     def __init__(self, link=None):
         if link is None:
             link = logit()
-        self.n = 1
-
         self.link = link
 
     def starting_mu(self, y):
@@ -161,15 +158,15 @@ class Binomial():
         return endog
 
     def weights(self, mu):
-        p = default_clip(mu / self.n)
-        variance = p * (1 - p) * self.n
+        p = default_clip(mu)
+        variance = p * (1 - p)
         return 1. / (self.link.deriv(mu)**2 * variance)
 
     def deviance(self, endog, mu):
         endog_mu = self._clean(endog / mu)
         n_endog_mu = self._clean((1. - endog) / (1. - mu))
         resid_dev = endog * np.log(endog_mu) + (1 - endog) * np.log(n_endog_mu)
-        return np.sum(2 * self.n * resid_dev)
+        return np.sum(2 * resid_dev)
 
     def fitted(self, lin_pred):
         fits = self.link.inverse(lin_pred)
@@ -183,40 +180,21 @@ class Binomial():
         return np.sum(ll_obs)
 
     def _clean(self, x):
-        return np.clip(x, FLOAT_EPS, np.inf)
+        return np.asarray([max(FLOAT_EPS, min(float('inf'), e)) for e in x])
 
     def loglike_obs(self, endog, mu):
-        n = self.n     # Number of trials
-        y = endog * n  # Number of successes
-
-        # note that mu is still in (0,1), i.e. not converted back
-        return (special.gammaln(n + 1) - special.gammaln(y + 1) -
-                special.gammaln(n - y + 1) + y * np.log(mu / (1 - mu)) +
-                n * np.log(1 - mu))
+        return [math.lgamma(2) - math.lgamma(endog[i] + 1) -
+                math.lgamma(2 - endog[i]) + endog[i] * math.log(mu[i] / (1 - mu[i])) +
+                math.log(1 - mu[i]) for i in range(len(endog))]
 
 def _check_convergence(criterion, iteration, atol, rtol):
     return np.allclose(criterion[iteration], criterion[iteration + 1],
                        atol=atol, rtol=rtol)
 
 class GLM():
-    def __init__(self, endog, exog, linkname='probit'):
-        self.linkname = linkname
-        link = None
-        if linkname == 'logit':
-            link = logit()
-        elif linkname == 'probit':
-            link = probit()
-        elif linkname == 'cauchy':
-            link = cauchy()
-        elif linkname == 'log':
-            link = log()
-        elif linkname == 'cloglog':
-            link = cloglog()
-        else:
-            raise Exception('Invalid Link Name')
-
-        missing = 'none'
-        hasconst = None
+    def __init__(self, endog, exog):
+        self.linkname = 'probit'
+        link = probit()
 
         self.endog = np.asarray(endog)
         self.exog = np.asarray(exog)
