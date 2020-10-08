@@ -154,9 +154,6 @@ class Binomial():
     def starting_mu(self, y):
         return (y + .5)/2
 
-    def initialize(self, endog):
-        return endog
-
     def weights(self, mu):
         p = default_clip(mu)
         variance = p * (1 - p)
@@ -192,59 +189,53 @@ def _check_convergence(criterion, iteration, atol, rtol):
                        atol=atol, rtol=rtol)
 
 class GLM():
-    def __init__(self, endog, exog):
+    def __init__(self, y, x):
         self.linkname = 'probit'
         link = probit()
 
-        self.endog = np.asarray(endog)
-        self.exog = np.asarray(exog)
+        self.y = np.asarray(y)
+        self.x = np.asarray(x)
 
         self.family = Binomial(link)
-        self.endog = self.family.initialize(self.endog)
 
     def fit(self):
         maxiter = 100
         atol = 1e-8
         rtol = 0
 
-        endog = self.endog
-        wlsexog = self.exog
+        y = self.y
+        wls_x = self.x
 
-        start_params = np.zeros(self.exog.shape[1])
-        mu = self.family.starting_mu(self.endog)
+        mu = np.asarray([(e + .5) / 2 for e in self.y])
         lin_pred = self.family.predict(mu)
         
         converged = False
 
-        dev = [np.inf, self.family.deviance(self.endog, mu)]
+        dev = [np.inf, self.family.deviance(self.y, mu)]
 
         for iteration in range(maxiter):
             self.weights = self.family.weights(mu)
-            wlsendog = (lin_pred + self.family.link.deriv(mu) * (self.endog-mu))
+            wls_y = (lin_pred + self.family.link.deriv(mu) * (self.y - mu))
 
             w_half = np.sqrt(self.weights)
-            mendog = w_half * wlsendog
-            mexog = np.asarray(w_half)[:, None] * wlsexog
-            wls_results, _, _, _ = np.linalg.lstsq(mexog, mendog, rcond=-1)
+            m_y = w_half * wls_y
+            m_x = np.asarray(w_half)[:, None] * wls_x
+            wls_results, _, _, _ = np.linalg.lstsq(m_x, m_y, rcond=-1)
 
-            lin_pred = np.dot(self.exog, wls_results)
+            lin_pred = np.dot(self.x, wls_results)
             mu = self.family.fitted(lin_pred)
-            dev.append(self.family.deviance(self.endog, mu))
-            if endog.squeeze().ndim == 1 and np.allclose(mu - endog, 0):
-                msg = "Perfect separation detected, results not available"
-                raise PerfectSeparationError(msg)
-            converged = _check_convergence(dev, iteration + 1, atol,
-                                           rtol)
+            dev.append(self.family.deviance(self.y, mu))
+            converged = _check_convergence(dev, iteration + 1, atol, rtol)
             if converged:
                 break
         self.mu = mu
 
-        wlsendog = np.asarray(wlsendog) * np.sqrt(self.weights)
-        wlsexog = np.asarray(wlsexog) * np.sqrt(self.weights)[:, None]
-        wlsexog = np.linalg.pinv(wlsexog, rcond=1e-15)
-        wls_results = np.dot(wlsexog, wlsendog)
+        wls_y = np.asarray(wls_y) * np.sqrt(self.weights)
+        wls_x = np.asarray(wls_x) * np.sqrt(self.weights)[:, None]
+        wls_x = np.linalg.pinv(wls_x, rcond=1e-15)
+        wls_results = np.dot(wls_x, wls_y)
 
-        logLike = self.family.loglike(self.endog, self.mu)
+        logLike = self.family.loglike(self.y, self.mu)
         return Summary(self.linkname, wls_results, logLike)
 
 class Summary():
