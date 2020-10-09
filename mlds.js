@@ -135,4 +135,12 @@
     const pdf = x => {
         return (1 / s2pi) * Math.exp(-x * x / 2);
     }
+
+    const probit = () => {
+        const link = p => default_clip(p).map(e => ndtri(e));
+        link.inverse = z => z.map(e => cdf(e));
+        link.deriv = p => default_clip(p).map(e => 1 / pdf(ndtri(e)));
+        link.inverse_deriv = z => link.deriv(link.inverse(z)).map(e => 1 / e);
+        return link;
+    }
 })();
