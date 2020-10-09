@@ -1,6 +1,5 @@
 import math
 import sys
-from numpy import allclose
 from numpy.linalg import lstsq, pinv
 
 FLOAT_EPS = sys.float_info.epsilon
@@ -152,6 +151,9 @@ def deviance(y, mu):
     y_mu = inf_clip([y[i] / mu[i] for i in range(len(y))])
     n_y_mu = inf_clip([(1. - y[i]) / (1. - mu[i]) for i in range(len(y))])
     return sum([2 * (y[i] * math.log(y_mu[i]) + (1 - y[i]) * math.log(n_y_mu[i])) for i in range(len(y))])
+
+def allclose(a, b, atol, rtol):
+    return abs(a - b) <= (atol + rtol * abs(b))
 
 def check_convergence(criterion, iteration, atol, rtol):
     return allclose(criterion[iteration], criterion[iteration + 1], atol=atol, rtol=rtol)
