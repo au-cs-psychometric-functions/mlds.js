@@ -143,4 +143,18 @@
         link.inverse_deriv = z => link.deriv(link.inverse(z)).map(e => 1 / e);
         return link;
     }
+
+    const deviance = (y, mu) => {
+        const y_mu = inf_clip(y.map((e, i) => e / mu[i]));
+        const n_y_mu = inf_clip(y.map((e, i) => (1.0 - e) / (1.0 - mu[i])));
+        return y.map((e, i) => 2 * (e * Math.log(y_mu[i]) + (1 - y[i]) * Math.log(n_y_mu[i]))).reduce((a, b) => a + b, 0);
+    }
+
+    const allclose = (a, b, atol, rtol) => {
+        return Math.abs(a - b) <= (atol + rtol * Math.abs(b));
+    }
+
+    const check_convergence = (criterion, iteration, atol, rtol) => {
+        return allclose(criterion[iteration], criterion[iteration + 1], atol, rtol);
+    }
 })();
