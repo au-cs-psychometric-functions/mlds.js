@@ -170,7 +170,12 @@ def glm(y, x):
 
     dev = [float('inf'), deviance(y, mu)]
 
-    for iteration in range(100):
+    iteration = 0
+    while True:
+        iteration += 1
+        if iteration > 100:
+            break
+
         p = default_clip(mu)
         variance = [p[i] * (1 - p[i]) for i in range(len(p))]
         weights = [1. / (m * m * variance[i]) for i, m in enumerate(link.deriv(mu))]
@@ -185,7 +190,7 @@ def glm(y, x):
         lin_pred = [sum([r[i] * wls_results[i] for i in range(len(r))]) for r in x]
         mu = link.inverse(lin_pred)
         dev.append(deviance(y, mu))
-        converged = check_convergence(dev, iteration + 1, 1e-8, 0)
+        converged = check_convergence(dev, iteration, 1e-8, 0)
         if converged:
             break
 
