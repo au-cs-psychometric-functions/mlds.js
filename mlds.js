@@ -1,7 +1,7 @@
 (function(exports) {
-    const default_clip = p => p.map(e => Math.max(Number.EPSILON, Math.min(1 - Number.EPSILON, e)));
+    const default_clip = p => p.map(e => Math.max(Math.EPSILON, Math.min(1 - Math.EPSILON, e)));
     
-    const inf_clip = p => p.map(e => Math.max(Number.EPSILON, Math.min(Number.POSITIVE_INFINITY, e)));
+    const inf_clip = p => p.map(e => Math.max(Math.EPSILON, Math.min(Math.POSITIVE_INFINITY, e)));
 
     const s2pi = 2.50662827463100050242E0;
     
@@ -156,5 +156,52 @@
 
     const check_convergence = (criterion, iteration, atol, rtol) => {
         return allclose(criterion[iteration], criterion[iteration + 1], atol, rtol);
+    }
+
+    const glm = (y, x) => {
+        const link = probit();
+        
+        let wls_x = x;
+
+        let mu = y.map(e => (e + 0.5) / 2);
+        let lin_pred = link(mu);
+
+        const dev = [Math.POSITIVE_INFINITY, deviance(y, mu)];
+
+        let iteration = 0;
+        while (true) {
+            iteration++;
+            if (iteration > 100) {
+                break;
+            }
+
+            variance = default_clip(mu).map(e => e * (1 - e));
+            weights = link.deriv(mu).map((e, i) => 1.0 / (e * e * variance[i]));
+
+            let wls_y = link.deriv(mu).map((e, i) => lin_pred[i] + e * (y[i] - mu[i]));
+
+            let w_half = weights.map(w => Math.sqrt(w));
+            let m_y = wls_y.map((e, i) => e * w_half[i]);
+            let m_x = w_half.map((w, i) => wls_x[i].map(e => w * e));
+            let wls_results = lstsq(m_x, m_y, -1);
+
+            lin_pred = x.map(r => r.map((e, i) => e * wls_results[i]).reduce((a, b) => a + b, 0));
+            mu = link.inverse(lin_pred);
+            dev.append(deviance(y, mu));
+            converged = check_convergence(dev, iteration, 1e-8, 0);
+            if (converged) {
+                break;
+            }
+        }
+
+        wls_y = wls_y.map((e, i) => e * Math.sqrt(weights[i]));
+        wls_x = weights.map((w, i) => wls_x[i].map(e => Math.sqrt(w) * e));
+        wls_x = pinv(wls_x, 1e-15);
+        wls_results = wls_x.map(r => r.map((e, i) => e * wls_y[i]).reduce((a, b) => a + b, 0));
+
+        const log_like = y.map((e, i) => Math.lgamma(2) - Math.lgamma(e + 1) -
+                        Math.lgamma(2 - e) + e * Math.log(mu[i] / (1 - mu[i])) +
+                        Math.log(1 - mu[i])).reduce((a, b) => a + b, 0);
+        return [wls_results, log_like];
     }
 })();
