@@ -1,13 +1,15 @@
 import math
-import numpy as np
+import sys
+from numpy import allclose
+from numpy.linalg import lstsq, pinv
 
-FLOAT_EPS = np.finfo(float).eps
+FLOAT_EPS = sys.float_info.epsilon
 
 def default_clip(p):
-    return np.asarray([max(FLOAT_EPS, min(1 - FLOAT_EPS, e)) for e in p])
+    return [max(FLOAT_EPS, min(1 - FLOAT_EPS, e)) for e in p]
 
 def inf_clip(p):
-    return np.asarray([max(FLOAT_EPS, min(float('inf'), e)) for e in p])
+    return [max(FLOAT_EPS, min(float('inf'), e)) for e in p]
 
 s2pi = 2.50662827463100050242E0
 
@@ -80,8 +82,6 @@ Q2 = [
 ]
 
 def ndtri(y0):
-    if y0 <= 0 or y0 >= 1:
-        raise ValueError("ndtri(x) needs 0 < x < 1")
     negate = True
     y = y0
     if y > 1.0 - 0.13533528323661269189:
@@ -116,33 +116,33 @@ def polevl(x, coef):
 
 def erf(x):
     z = abs(x)
-    t = 1. / (1. + 0.5*z)
-    r = t * math.exp(-z*z-1.26551223+t*(1.00002368+t*(.37409196+
-        t*(.09678418+t*(-.18628806+t*(.27886807+
-        t*(-1.13520398+t*(1.48851587+t*(-.82215223+
-        t*.17087277)))))))))
+    t = 1. / (1. + 0.5 * z)
+    r = t * math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (.37409196 +
+        t * (.09678418 + t * (-.18628806 + t * (.27886807 +
+        t * (-1.13520398 + t * (1.48851587 + t * (-.82215223 +
+        t * .17087277)))))))))
     if (x >= 0.):
         return r
     else:
         return 2. - r
 
 def cdf(x):
-    return 1. - 0.5*erf(x/(2**0.5))
+    return 1. - 0.5 * erf(x / (2**0.5))
 
 def pdf(x):
-    return (1/s2pi)*math.exp(-x*x/2)
+    return (1 / s2pi) * math.exp(-x * x / 2)
 
 def probit():
     def link(p):
         p = default_clip(p)
-        return np.asarray([ndtri(e) for e in p])
+        return [ndtri(e) for e in p]
     def inverse(z):
-        return np.asarray([cdf(e) for e in z])
+        return [cdf(e) for e in z]
     def deriv(p):
         p = default_clip(p)
-        return 1 / np.asarray([pdf(ndtri(e)) for e in p])
+        return [1 / pdf(ndtri(e)) for e in p]
     def inverse_deriv(z):
-        return 1 / deriv(inverse(z))
+        return [1 / e for e in deriv(inverse(z))]
     link.inverse = inverse
     link.deriv = deriv
     link.inverse_deriv = inverse_deriv
@@ -154,45 +154,43 @@ def deviance(y, mu):
     return sum([2 * (y[i] * math.log(y_mu[i]) + (1 - y[i]) * math.log(n_y_mu[i])) for i in range(len(y))])
 
 def check_convergence(criterion, iteration, atol, rtol):
-    return np.allclose(criterion[iteration], criterion[iteration + 1], atol=atol, rtol=rtol)
+    return allclose(criterion[iteration], criterion[iteration + 1], atol=atol, rtol=rtol)
 
 def glm(y, x):
     link = probit()
-    y = np.asarray(y)
-    x = np.asarray(x)
 
     wls_x = x
 
-    mu = np.asarray([(e + .5) / 2 for e in y])
+    mu = [(e + .5) / 2 for e in y]
     lin_pred = link(mu)
     
     converged = False
 
-    dev = [np.inf, deviance(y, mu)]
+    dev = [float('inf'), deviance(y, mu)]
 
     for iteration in range(100):
         p = default_clip(mu)
-        variance = p * (1 - p)
-        weights = 1. / (link.deriv(mu)**2 * variance)
+        variance = [p[i] * (1 - p[i]) for i in range(len(p))]
+        weights = [1. / (m * m * variance[i]) for i, m in enumerate(link.deriv(mu))]
 
-        wls_y = (lin_pred + link.deriv(mu) * (y - mu))
+        wls_y = [lin_pred[i] + m * (y[i] - mu[i]) for i, m in enumerate(link.deriv(mu))]
 
-        w_half = np.sqrt(weights)
-        m_y = w_half * wls_y
-        m_x = np.asarray(w_half)[:, None] * wls_x
-        wls_results, _, _, _ = np.linalg.lstsq(m_x, m_y, rcond=-1)
+        w_half = [math.sqrt(weight) for weight in weights]
+        m_y = [w_half[i] * wls_y[i] for i in range(len(wls_y))]
+        m_x = [[w_half[i] * x for x in wls_x[i]] for i in range(len(w_half))]
+        wls_results, _, _, _ = lstsq(m_x, m_y, rcond=-1)
 
-        lin_pred = np.dot(x, wls_results)
+        lin_pred = [sum([r[i] * wls_results[i] for i in range(len(r))]) for r in x]
         mu = link.inverse(lin_pred)
         dev.append(deviance(y, mu))
         converged = check_convergence(dev, iteration + 1, 1e-8, 0)
         if converged:
             break
 
-    wls_y = np.asarray(wls_y) * np.sqrt(weights)
-    wls_x = np.asarray(wls_x) * np.sqrt(weights)[:, None]
-    wls_x = np.linalg.pinv(wls_x, rcond=1e-15)
-    wls_results = np.dot(wls_x, wls_y)
+    wls_y = [wls_y[i] * math.sqrt(weights[i]) for i in range(len(wls_y))]
+    wls_x = [[math.sqrt(weights[i]) * x for x in wls_x[i]] for i in range(len(weights))]
+    wls_x = pinv(wls_x, rcond=1e-15)
+    wls_results = [sum([r[i] * wls_y[i] for i in range(len(r))]) for r in wls_x]
 
     log_like = sum([math.lgamma(2) - math.lgamma(y[i] + 1) -
             math.lgamma(2 - y[i]) + y[i] * math.log(mu[i] / (1 - mu[i])) +
