@@ -1,6 +1,6 @@
 import math
 import sys
-from numpy.linalg import lstsq, pinv
+from numpy.linalg import pinv
 
 FLOAT_EPS = sys.float_info.epsilon
 
@@ -158,6 +158,40 @@ def allclose(a, b, atol, rtol):
 def check_convergence(criterion, iteration, atol, rtol):
     return allclose(criterion[iteration], criterion[iteration + 1], atol=atol, rtol=rtol)
 
+def rref(A):
+    lead = 0
+    m = len(A)
+    n = len(A[0])
+    for r in range(m):
+        if lead >= n:
+            return
+        i = r
+        while A[i][lead] == 0:
+            i += 1
+            if i == m:
+                i = r
+                lead += 1
+                if n == lead:
+                    return
+        A[i], A[r] = A[r], A[i]
+        lv = A[r][lead]
+        A[r] = [mrx / float(lv) for mrx in A[r]]
+        for i in range(m):
+            if i != r:
+                lv = A[i][lead]
+                A[i] = [iv - lv * rv for rv, iv in zip(A[r], A[i])]
+        lead += 1
+    return A
+
+def lstsq(a, b):
+    at = [*zip(*a)]
+    ata = [[sum([a * b for a, b in zip(at[m], at[n])]) for n in range(len(at))] for m in range(len(at))]
+    atb = [sum([a * b for a, b in zip(at[m], b)]) for m in range(len(at))]
+    augmented = [ata[m] + [atb[m]] for m in range(len(ata))]
+    reduced = rref(augmented)
+    sol = [reduced[m][-1] for m in range(len(reduced))]
+    return sol
+
 def glm(y, x):
     link = probit()
 
@@ -185,7 +219,7 @@ def glm(y, x):
         w_half = [math.sqrt(weight) for weight in weights]
         m_y = [w_half[i] * wls_y[i] for i in range(len(wls_y))]
         m_x = [[w_half[i] * x for x in wls_x[i]] for i in range(len(w_half))]
-        wls_results, _, _, _ = lstsq(m_x, m_y, rcond=-1)
+        wls_results = lstsq(m_x, m_y)
 
         lin_pred = [sum([r[i] * wls_results[i] for i in range(len(r))]) for r in x]
         mu = link.inverse(lin_pred)
