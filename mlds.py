@@ -1,6 +1,5 @@
 import math
 import sys
-from numpy.linalg import pinv
 
 FLOAT_EPS = sys.float_info.epsilon
 
@@ -9,6 +8,27 @@ def default_clip(p):
 
 def inf_clip(p):
     return [max(FLOAT_EPS, min(float('inf'), e)) for e in p]
+
+def transpose(a):
+    m = len(a)
+    n = len(a[0])
+    at = []
+    for i in range(n): at.append([0.0]*m)
+    for i in range(m):
+        for j in range(n):
+            at[j][i] = a[i][j]
+    return at
+
+def pythag(a,b):
+    absa = abs(a)
+    absb = abs(b)
+    if absa > absb:
+        return absa * math.sqrt(1.0 + math.pow(absb / absa, 2))
+    else:
+        if absb == 0.0:
+            return 0.0
+        else:
+            return absb * math.sqrt(1.0 + math.pow(absa / absb, 2))
 
 s2pi = 2.50662827463100050242E0
 
@@ -184,13 +204,217 @@ def rref(A):
     return A
 
 def lstsq(a, b):
-    at = [*zip(*a)]
+    at = transpose(a)
     ata = [[sum([a * b for a, b in zip(at[m], at[n])]) for n in range(len(at))] for m in range(len(at))]
     atb = [sum([a * b for a, b in zip(at[m], b)]) for m in range(len(at))]
     augmented = [ata[m] + [atb[m]] for m in range(len(ata))]
     reduced = rref(augmented)
     sol = [reduced[m][-1] for m in range(len(reduced))]
     return sol
+
+def svd(a):
+    tol = 1.e-64 / FLOAT_EPS
+    itmax = 50
+    u = a
+    m = len(a)
+    n = len(a[0])
+
+    if m < n:
+        raise ValueError('m < n')
+
+    e = [0.0] * n
+    q = [0.0] * n
+    v = []
+    for k in range(n):
+        v.append([0.0] * n)
+
+    g = 0.0
+    x = 0.0
+
+    for i in range(n):
+        e[i] = g
+        s = 0.0
+        l = i + 1
+        for j in range(i, m):
+            s += u[j][i] * u[j][i]
+        if s <= tol:
+            g = 0.0
+        else:
+            f = u[i][i]
+            if f < 0.0:
+                g = math.sqrt(s)
+            else:
+                g = -math.sqrt(s)
+            h = f * g - s
+            u[i][i] = f - g
+            for j in range(l, n):
+                s = 0.0
+                for k in range(i,m):
+                    s += u[k][i] * u[k][j]
+                f = s / h
+                for k in range(i, m):
+                    u[k][j] = u[k][j] + f * u[k][i]
+        q[i] = g
+        s = 0.0
+        for j in range(l, n):
+            s = s + u[i][j] * u[i][j]
+        if s <= tol:
+            g = 0.0
+        else:
+            f = u[i][i + 1]
+            if f < 0.0:
+                g = math.sqrt(s)
+            else:
+                g = -math.sqrt(s)
+            h = f * g - s
+            u[i][i+1] = f - g
+            for j in range(l,n):
+                e[j] = u[i][j] / h
+            for j in range(l, m):
+                s = 0.0
+                for k in range(l,n):
+                    s = s + u[j][k] * u[i][k]
+                for k in range(l,n):
+                    u[j][k] = u[j][k] + s * e[k]
+        y = abs(q[i]) + abs(e[i])
+        if y > x:
+            x = y
+
+    for i in range(n - 1, -1, -1):
+        if g != 0.0:
+            h = g * u[i][i + 1]
+            for j in range(l,n):
+                v[j][i] = u[i][j] / h
+            for j in range(l,n):
+                s = 0.0
+                for k in range(l, n):
+                    s += u[i][k] * v[k][j]
+                for k in range(l, n):
+                    v[k][j] += s * v[k][i]
+        for j in range(l, n):
+            v[i][j] = 0.0
+            v[j][i] = 0.0
+        v[i][i] = 1.0
+        g = e[i]
+        l = i
+
+    for i in range(n - 1, -1, -1):
+        l = i + 1
+        g = q[i]
+        for j in range(l, n):
+            u[i][j] = 0.0
+        if g != 0.0:
+            h = u[i][i] * g
+            for j in range(l,n):
+                s = 0.0
+                for k in range(l, m):
+                    s += u[k][i] * u[k][j]
+                f = s / h
+                for k in range(i, m):
+                    u[k][j] += f * u[k][i]
+            for j in range(i, m):
+                u[j][i] = u[j][i] / g
+        else:
+            for j in range(i, m):
+                u[j][i] = 0.0
+        u[i][i] += 1.0
+
+    eps = FLOAT_EPS * x
+    for k in range(n - 1, -1, -1):
+        for iteration in range(itmax):
+            for l in range(k, -1, -1):
+                test_f = False
+                if abs(e[l]) <= eps:
+                    test_f = True
+                    break
+                if abs(q[l - 1]) <= eps:
+                    break
+            if not test_f:
+                c = 0.0
+                s = 1.0
+                l1 = l - 1
+                for i in range(l, k + 1):
+                    f = s * e[i]
+                    e[i] = c * e[i]
+                    if abs(f) <= eps:
+                        break
+                    g = q[i]
+                    h = pythag(f, g)
+                    q[i] = h
+                    c = g / h
+                    s = -f / h
+                    for j in range(m):
+                        y = u[j][l1]
+                        z = u[j][i]
+                        u[j][l1] = y * c + z * s
+                        u[j][i] = -y * s + z * c
+            z = q[k]
+            if l == k:
+                if z < 0.0:
+                    q[k] = -z
+                    for j in range(n):
+                        v[j][k] = -v[j][k]
+                break
+            if iteration >= itmax - 1:
+                break
+            x = q[l]
+            y = q[k - 1]
+            g = e[k - 1]
+            h = e[k]
+            f = ((y - z) * (y + z) + (g - h) * (g + h)) / (2.0 * h *y)
+            g = pythag(f, 1.0)
+            if f < 0:
+                f = ((x - z) * (x + z) + h * (y / (f - g) - h)) / x
+            else:
+                f = ((x - z) * (x + z) + h * (y / (f + g) - h)) / x
+            c = 1.0
+            s = 1.0
+            for i in range(l + 1,k + 1):
+                g = e[i]
+                y = q[i]
+                h = s * g
+                g = c * g
+                z = pythag(f, h)
+                e[i-1] = z
+                c = f / z
+                s = h / z
+                f = x * c + g * s
+                g = -x * s + g * c
+                h = y * s
+                y = y * c
+                for j in range(n):
+                    x = v[j][i - 1]
+                    z = v[j][i]
+                    v[j][i-1] = x * c + z * s
+                    v[j][i] = -x * s + z * c
+                z = pythag(f, h)
+                q[i-1] = z
+                c = f / z
+                s = h / z
+                f = c * g + s * y
+                x = -s * g + c * y
+                for j in range(m):
+                    y = u[j][i - 1]
+                    z = u[j][i]
+                    u[j][i-1] = y * c + z * s
+                    u[j][i] = -y * s + z * c
+            e[l] = 0.0
+            e[k] = f
+            q[k] = x
+            
+    vt = transpose(v)
+    return u, q, vt
+
+def pinv(a):
+    u, s, vt = svd(a)
+    cutoff = 1e-15 * max(s)
+    s = [1 / e if e > cutoff else 0 for e in s]
+    ut = transpose(u)
+    v = transpose(vt)
+    s = [[ut[m][n] * s[m] for n in range(len(ut[m]))] for m in range(len(ut))]
+    st = transpose(s)
+    res = [[sum([a * b for a, b in zip(v[vm], st[stm])]) for stm in range(len(st))] for vm in range(len(v))]
+    return res
 
 def glm(y, x):
     link = probit()
@@ -230,7 +454,7 @@ def glm(y, x):
 
     wls_y = [wls_y[i] * math.sqrt(weights[i]) for i in range(len(wls_y))]
     wls_x = [[math.sqrt(weights[i]) * x for x in wls_x[i]] for i in range(len(weights))]
-    wls_x = pinv(wls_x, rcond=1e-15)
+    wls_x = pinv(wls_x)
     wls_results = [sum([r[i] * wls_y[i] for i in range(len(r))]) for r in wls_x]
 
     log_like = sum([math.lgamma(2) - math.lgamma(y[i] + 1) -
