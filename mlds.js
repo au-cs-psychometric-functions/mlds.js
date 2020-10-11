@@ -118,10 +118,11 @@
         let x0 = x - Math.log(x) / x;
 
         let z = 1.0 / x;
+        let x1 = 0;
         if (x < 8.0) {
-            let x1 = z * polevl(z, P1) / polevl(z, Q1);
+            x1 = z * polevl(z, P1) / polevl(z, Q1);
         } else {
-            let x1 = z * polevl(z, P2) / polevl(z, Q2);
+            x1 = z * polevl(z, P2) / polevl(z, Q2);
         }
         x = x0 - x1;
         if (negate) {
@@ -466,7 +467,7 @@
 
     const pinv = a => {
         let [u, s, vt] = svd(a);
-        const cutoff = 1e15 * Math.max(s);
+        const cutoff = 1e-15 * Math.max(s);
         s = s.map(e => e > cutoff ? 1 / e : 0);
         let ut = transpose(u);
         let v = transpose(vt);
@@ -501,6 +502,7 @@
             weights = link.deriv(mu).map((e, i) => 1.0 / (e * e * variance[i]));
 
             wls_y = link.deriv(mu).map((e, i) => lin_pred[i] + e * (y[i] - mu[i]));
+            console.log(wls_y);
 
             let w_half = weights.map(e => Math.sqrt(e));
             let m_y = wls_y.map((e, i) => e * w_half[i]);
@@ -510,8 +512,10 @@
             lin_pred = x.map(r => r.map((e, i) => e * wls_results[i]).reduce((a, b) => a * b, 0));
             mu = link.inverse(lin_pred);
             dev.push(deviance(y, mu));
-            converged = check_convergence(dev, iteration, 1e8, 0);
+            converged = check_convergence(dev, iteration, 1e-8, 0);
             if (converged) {
+                print('Converged');
+                print(iteration + '');
                 break;
             }
         }
@@ -556,5 +560,9 @@
         });
         const results = exports.mlds(data);
         console.log(results);
+    }
+
+    const print = str => {
+        console.log(str);
     }
 })(this);
