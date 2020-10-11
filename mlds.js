@@ -173,36 +173,41 @@
     const allclose = (a, b, atol, rtol) => Math.abs(a - b) <= (atol + rtol * Math.abs(b));
 
     const check_convergence = (criterion, iteration, atol, rtol) => allclose(criterion[iteration], criterion[iteration + 1], atol, rtol);
-    
-    const rref = a => {
+
+    rref = a => {
         let lead = 0;
-        let i = lv = 0;
         const m = a.length;
         const n = a[0].length;
         for (let r = 0; r < m; r++) {
-            if (lead >= n) {
+            if (n <= lead) {
                 return;
             }
-            i = r;
-            while (a[i][lead] === 0) {
+            let i = r;
+            while (a[i][lead] == 0) {
                 i++;
-                if (i === m) {
+                if (m === i) {
                     i = r;
-                    lead += 1;
+                    lead++;
                     if (n === lead) {
                         return;
                     }
                 }
             }
+     
             [a[i], a[r]] = [a[r], a[i]];
-            lv = a[r][lead];
-            a[r] = a[r].map(mrx => mrx / lv);
-            for (let j = 0; j < m; j++) {
-                if (j !== r) {
-                    lv = a[i][lead];
-                    for (let k = 0; k < n; k++) {
-                        a[j][k] -= lv * a[j][k];
-                    }
+     
+            let val = a[r][lead];
+            for (let j = 0; j < n; j++) {
+                a[r][j] /= val;
+            }
+     
+            for (let i = 0; i < m; i++) {
+                if (i === r) {
+                    continue;
+                }
+                val = a[i][lead];
+                for (var j = 0; j < n; j++) {
+                    a[i][j] -= val * a[r][j];
                 }
             }
             lead++;
@@ -212,18 +217,16 @@
     
     const lstsq = (a, b) => {
         at = transpose(a);
-        console.log(at[0][0]);
         ata = at.map(x => at.map(y => x.map((e, i) => e * y[i]).reduce((a, b) => a + b, 0)));
-        console.log(ata);
         atb = at.map(x => x.map((e, i) => e * b[i]).reduce((a, b) => a + b, 0));
-        return rref(ata.map((e, i) => e + atb[i])).map(e => e[e.length - 1]);
+        return rref(ata.map((e, i) => e.concat(atb[i]))).map(e => e[e.length - 1]);
     }
 
     const svd = a => {
-        const tol = 1e-64 / FLOAT_EPS;
+        const tol = 1e-64 / Number.EPSILON;
         const itmax = 50;
-        const m = len(a);
-        const n = len(a[0]);
+        const m = a.length;
+        const n = a[0].length;
 
         let u = a;
 
@@ -356,7 +359,7 @@
             u[i][i] += 1.0;
         }
 
-        const eps = FLOAT_EPS * x
+        const eps = Number.EPSILON * x
         let test_f = false;
         for (let k = n - 1; k >= 0; k--) {
             for (let iteration = 0; iteration < itmax; iteration++) {
@@ -477,6 +480,8 @@
         const link = probit();
 
         let wls_x = x;
+        let wls_y = y;
+        let weights = [];
 
         let mu = y.map(e => (e + 0.5) / 2);
         let lin_pred = link(mu);
@@ -493,9 +498,9 @@
             }
 
             let variance = default_clip(mu).map(e => e * (1 - e));
-            let weights = link.deriv(mu).map((e, i) => 1.0 / (e * e * variance[i]));
+            weights = link.deriv(mu).map((e, i) => 1.0 / (e * e * variance[i]));
 
-            let wls_y = link.deriv(mu).map((e, i) => lin_pred[i] + e * (y[i] - mu[i]));
+            wls_y = link.deriv(mu).map((e, i) => lin_pred[i] + e * (y[i] - mu[i]));
 
             let w_half = weights.map(e => Math.sqrt(e));
             let m_y = wls_y.map((e, i) => e * w_half[i]);
