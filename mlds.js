@@ -1,10 +1,22 @@
 (function(exports) {
-    const default_clip = p => p.map(e => Math.max(Math.EPSILON, Math.min(1 - Math.EPSILON, e)));
+    const default_clip = p => p.map(e => Math.max(Number.EPSILON, Math.min(1 - Number.EPSILON, e)))
+
+    const inf_clip = p => p.map(e => Math.max(Number.EPSILON, Math.min(Number.POSITIVE_INFINITY, e)));
     
-    const inf_clip = p => p.map(e => Math.max(Math.EPSILON, Math.min(Math.POSITIVE_INFINITY, e)));
+    const transpose = a => a[0].map((x, i) => a.map(x => a[i]))
+
+    const pythag = (a, b) => {
+        const abs_a = Math.abs(a)
+        const abs_b = Math.abs(b)
+        if (abs_a > abs_b) {
+            return abs_a * Math.sqrt(1.0 + Math.pow(abs_b / abs_a, 2));
+        } else {
+            return abs_b * Math.sqrt(1.0 + Math.pow(abs_a / abs_b, 2));
+        }
+    }
 
     const s2pi = 2.50662827463100050242E0;
-    
+
     const P0 = [
         -5.99633501014107895267E1,
         9.80010754185999661536E1,
@@ -73,30 +85,30 @@
         6.79019408009981274425E-9,
     ];
 
-    const ndtri = y0 => {
+    const ndtri = y0 => { 
         let negate = true;
-        y = y0;
+        let y = y0;
         if (y > 1.0 - 0.13533528323661269189) {
             y = 1.0 - y;
             negate = false;
         }
-
+        
         if (y > 0.13533528323661269189) {
             y = y - 0.5;
-            y2 = y * y;
-            x = y + y * (y2 * polevl(y2, P0) / polevl(y2, Q0));
+            let y2 = y * y;
+            let x = y + y * (y2 * polevl(y2, P0) / polevl(y2, Q0));
             x = x * s2pi;
             return x;
         }
 
-        x = Math.sqrt(-2.0 * Math.log(y));
-        x0 = x - Math.log(x) / x;
+        let x = Math.sqrt(-2.0 * Math.log(y));
+        let x0 = x - Math.log(x) / x;
 
-        z = 1.0 / x;
+        let z = 1.0 / x;
         if (x < 8.0) {
-            x1 = z * polevl(z, P1) / polevl(z, Q1);
+            let x1 = z * polevl(z, P1) / polevl(z, Q1);
         } else {
-            x1 = z * polevl(z, P2) / polevl(z, Q2);
+            let x1 = z * polevl(z, P2) / polevl(z, Q2);
         }
         x = x0 - x1;
         if (negate) {
@@ -108,65 +120,355 @@
     const polevl = (x, coef) => {
         let accum = 0;
         coef.forEach(c => {
-            acum = x * accum + c;
+            accum = x * accum + c;
         });
         return accum;
     }
-
+    
     const erf = x => {
-        z = Math.abs(x);
-        t = 1. / (1. + 0.5 * z)
-        r = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (0.37409196 +
-            t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 +
-            t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 +
-            t * 0.17087277)))))))));
+        const z = Math.abs(x)
+        const t = 1. / (1. + 0.5 * z)
+        const r = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (.37409196 +
+            t * (.09678418 + t * (-.18628806 + t * (.27886807 +
+            t * (-1.13520398 + t * (1.48851587 + t * (-.82215223 +
+            t * .17087277)))))))))
         if (x >= 0.0) {
-            return r
-        }
-        else {
+            return r;
+        } else {
             return 2.0 - r;
         }
     }
 
-    const cdf = x => {
-        return 1.0 - 0.5 * erf(x / Math.sqrt(2));
-    }
+    const cdf = x => 1.0 - 0.5 * erf(x / Math.sqrt(2));
 
-    const pdf = x => {
-        return (1 / s2pi) * Math.exp(-x * x / 2);
-    }
+    const pdf = x => (1 / s2pi) * Math.exp(-x * x / 2);
 
     const probit = () => {
         const link = p => default_clip(p).map(e => ndtri(e));
         link.inverse = z => z.map(e => cdf(e));
         link.deriv = p => default_clip(p).map(e => 1 / pdf(ndtri(e)));
-        link.inverse_deriv = z => link.deriv(link.inverse(z)).map(e => 1 / e);
+        link.inverse_deriv = z => deriv(inverse(p)).map(e => 1 / e);
         return link;
     }
 
     const deviance = (y, mu) => {
-        const y_mu = inf_clip(y.map((e, i) => e / mu[i]));
-        const n_y_mu = inf_clip(y.map((e, i) => (1.0 - e) / (1.0 - mu[i])));
-        return y.map((e, i) => 2 * (e * Math.log(y_mu[i]) + (1 - y[i]) * Math.log(n_y_mu[i]))).reduce((a, b) => a + b, 0);
+        y_mu = inf_clip(y.map((e, i) => e / mu[i]));
+        n_y_mu = inf_clip(y.map((e, i) => (1.0 - e) / (1.0 - mu[i])));
+        return y.map((e, i) => 2 * (e * Math.log(y_mu[i]) + (1 - e) * Math.log(n_y_mu[i]))).reduce((a, b) => a + b, 0);
     }
 
-    const allclose = (a, b, atol, rtol) => {
-        return Math.abs(a - b) <= (atol + rtol * Math.abs(b));
+    const allclose = (a, b, atol, rtol) => Math.abs(a - b) <= (atol + rtol * Math.abs(b));
+
+    const check_convergence = (criterion, iteration, atol, rtol) => allclose(criterion[iteration], criterion[iteration + 1], atol, rtol);
+    
+    const rref = a => {
+        let lead = 0;
+        let i = lv = 0;
+        const m = a.length;
+        const n = a[0].length;
+        for (let r = 0; r < m; r++) {
+            if (lead >= n) {
+                return;
+            }
+            i = r;
+            while (a[i][lead] === 0) {
+                i++;
+                if (i === m) {
+                    i = r;
+                    lead += 1;
+                    if (n === lead) {
+                        return;
+                    }
+                }
+            }
+            [a[i], a[r]] = [a[r], a[i]];
+            lv = a[r][lead];
+            a[r] = a[r].map(mrx => mrx / lv);
+            for (let j = 0; j < m; j++) {
+                if (j !== r) {
+                    lv = a[i][lead];
+                    for (let k = 0; k < n; k++) {
+                        a[j][k] -= lv * a[j][k];
+                    }
+                }
+            }
+            lead++;
+        }
+        return a;
+    }
+    
+    const lstsq = (a, b) => {
+        at = transpose(a);
+        ata = at.map(x => at.map(y => x.map((e, i) => e * y[i]).reduce((a, b) => a + b, 0)));
+        atb = at.map(x => x.map((e, i) => e * b[i]).reduce((a, b) => a + b, 0));
+        return rref(ata.map((e, i) => e + atb[i])).map(e => e[e.length - 1]);
     }
 
-    const check_convergence = (criterion, iteration, atol, rtol) => {
-        return allclose(criterion[iteration], criterion[iteration + 1], atol, rtol);
+    const svd = a => {
+        const tol = 1e-64 / FLOAT_EPS;
+        const itmax = 50;
+        const m = len(a);
+        const n = len(a[0]);
+
+        let u = a;
+
+        if (m < n) {
+            throw Exception('m < n');
+        }
+    
+        let e = Array.from(Array(n), () => 0.0);
+        let q = Array.from(Array(n), () => 0.0);
+        let v = e.map(() => Array.from(Array(n), () => 0.0));
+    
+        let g = 0.0;
+        let x = 0.0;
+
+        for (let i = 0; i < n; i++) {
+            e[i] = g;
+            s = 0.0;
+            l = i + 1;
+            for (let j = i; j < m; j++) {
+                s += u[j][i] * u[j][i];
+            }
+            if (s <= tol) {
+                g = 0.0;
+            } else {
+                f = u[i][i];
+                if (f < 0.0) {
+                    g = Math.sqrt(s);
+                } else {
+                    g = -Math.sqrt(s);
+                }
+                h = f * g - s;
+                u[i][i] = f - g;
+                for (let j = l; j < n; j++) {
+                    s = 0.0;
+                    for (let k = i; k < m; k++) {
+                        s += u[k][i] * u[k][j];
+                    }
+                    f = s / h;
+                    for (let k = i; k < m; k++) {
+                        u[k][j] = u[k][j] + f * u[k][i];
+                    }
+                }
+            }
+            q[i] = g;
+            s = 0.0;
+            for (let j = l; j < n; j++) {
+                s = s + u[i][j] * u[i][j];
+            }
+            if (s <= tol) {
+                g = 0.0;
+            } else {
+                f = u[i][i + 1]
+                if (f < 0.0) {
+                    g = Math.sqrt(s);
+                } else {
+                    g = -Math.sqrt(s);
+                }
+                h = f * g - s;
+                u[i][i+1] = f - g;
+                for (let j = l; j < n; j++) {
+                    e[j] = u[i][j] / h;
+                }
+                for (let j = l; j < m; j++) {
+                    s = 0.0;
+                    for (let k = l; k < n; k++) {
+                        s = s + u[j][k] * u[i][k];
+                    }
+                    for (let k = l; k < n; k++) {
+                        u[j][k] = u[j][k] + s * e[k];
+                    }
+                }
+            }
+            let y = Math.abs(q[i]) + Math.abs(e[i]);
+            if (y > x) {
+                x = y;
+            }
+        }
+        
+        for (let i = n - 1; i >= 0; i--) {
+            if (g !== 0.0) {
+                h = g * u[i][i + 1];
+                for (let j = l; j < n; j++) {
+                    v[j][i] = u[i][j] / h;
+                }
+                for (let j = l; j < n; j++) {
+                    s = 0.0;
+                    for (let k = l; k < n; k++) {
+                        s += u[i][k] * v[k][j];
+                    }
+                    for (let k = l; k < n; k++) {
+                        v[k][j] += s * v[k][i];
+                    }
+                }
+            }
+            for (let j = l; j < n; j++) {
+                v[i][j] = 0.0;
+                v[j][i] = 0.0;
+            }
+            v[i][i] = 1.0;
+            g = e[i];
+            l = i;
+        }
+    
+        for (let i = n; i >= 0; i--) {
+            l = i + 1;
+            g = q[i];
+            for (let j = l; j < n; j++) {
+                u[i][j] = 0.0;
+            }
+            if (g != 0.0) {
+                h = u[i][i] * g;
+                for (let j = l; j < n; j++) {
+                    s = 0.0;
+                    for (let k = l; k < m; k++) {
+                        s += u[k][i] * u[k][j];
+                    }
+                    f = s / h;
+                    for (let k = i; k < m; k++) {
+                        u[k][j] += f * u[k][i];
+                    }
+                }
+                for (let j = i; j < m; j++) {
+                    u[j][i] = u[j][i] / g;
+                }
+            } else {
+                for (let j = i; j < m; j++) {
+                    u[j][i] = 0.0;
+                }
+            }
+            u[i][i] += 1.0;
+        }
+
+        const eps = FLOAT_EPS * x
+        let test_f = false;
+        for (let k = n - 1; k >= 0; k--) {
+            for (let iteration = 0; iteration < itmax; iteration++) {
+                for (let l = k; k >= 0; k--) {
+                    test_f = false;
+                    if (Math.abs(e[l]) <= eps) {
+                        test_f = true;
+                        break;
+                    }
+                    if (Math.abs(q[l - 1]) <= eps) {
+                        break;
+                    }
+                }
+                if (!test_f) {
+                    c = 0.0;
+                    s = 1.0;
+                    l1 = l - 1;
+                    for (let i = l; i < k + 1; i++) {
+                        f = s * e[i];
+                        e[i] = c * e[i];
+                        if (Math.abs(f) <= eps) {
+                            break;
+                        }
+                        g = q[i];
+                        h = pythag(f, g);
+                        q[i] = h;
+                        c = g / h;
+                        s = -f / h;
+                        for (let j = 0; j < m; j++) {
+                            y = u[j][l1];
+                            z = u[j][i];
+                            u[j][l1] = y * c + z * s;
+                            u[j][i] = -y * s + z * c;
+                        }
+                    }
+                }
+                z = q[k];
+                if (l === k) {
+                    if (z < 0.0) {
+                        q[k] = -z;
+                        for (let j = 0; j < n; j++) {
+                            v[j][k] = -v[j][k];
+                        }
+                    }
+                    break;
+                }
+                if (iteration >= itmax - 1) {
+                    break;
+                }
+                x = q[l];
+                y = q[k - 1];
+                g = e[k - 1];
+                h = e[k];
+                f = ((y - z) * (y + z) + (g - h) * (g + h)) / (2.0 * h * y);
+                g = pythag(f, 1.0);
+                if (f < 0) {
+                    f = ((x - z) * (x + z) + h * (y / (f - g) - h)) / x;
+                } else {
+                    f = ((x - z) * (x + z) + h * (y / (f + g) - h)) / x;
+                }
+                c = 1.0;
+                s = 1.0;
+                for (let i = l + 1; i < k + 1; i++) {
+                    g = e[i];
+                    y = q[i];
+                    h = s * g;
+                    g = c * g;
+                    z = pythag(f, h);
+                    e[i-1] = z;
+                    c = f / z;
+                    s = h / z;
+                    f = x * c + g * s;
+                    g = -x * s + g * c;
+                    h = y * s;
+                    y = y * c;
+                    for (let j = 0; j < n; j++) {
+                        x = v[j][i - 1];
+                        z = v[j][i];
+                        v[j][i-1] = x * c + z * s;
+                        v[j][i] = -x * s + z * c;
+                    }
+                    z = pythag(f, h);
+                    q[i-1] = z;
+                    c = f / z;
+                    s = h / z;
+                    f = c * g + s * y;
+                    x = -s * g + c * y;
+                    for (let j = 0; j < m; j++) {
+                        y = u[j][i - 1];
+                        z = u[j][i];
+                        u[j][i-1] = y * c + z * s;
+                        u[j][i] = -y * s + z * c;
+                    }
+                }
+                e[l] = 0.0;
+                e[k] = f;
+                q[k] = x;
+            }
+        }
+
+        vt = transpose(v);
+        return [u, q, vt];
+    }
+
+    const pinv = a => {
+        let [u, s, vt] = svd(a);
+        const cutoff = 1e15 * Math.max(s);
+        s = s.map(e => e > cutoff ? 1 / e : 0);
+        let ut = transpose(u);
+        let v = transpose(vt);
+        s = ut.map((m, i) => m.map(n => n * s[i]));
+        let st = transpose(s);
+        res = v.map(vm => st.map(stm => vm.map((e, i) => e * stm[i]).reduce((a, b) => a * b, 0)));
+        return res;
     }
 
     const glm = (y, x) => {
         const link = probit();
-        
+
         let wls_x = x;
 
         let mu = y.map(e => (e + 0.5) / 2);
         let lin_pred = link(mu);
 
-        const dev = [Math.POSITIVE_INFINITY, deviance(y, mu)];
+        let converged = false;
+
+        let dev = [Number.POSITIVE_INFINITY, deviance(y, mu)];
 
         let iteration = 0;
         while (true) {
@@ -175,33 +477,64 @@
                 break;
             }
 
-            variance = default_clip(mu).map(e => e * (1 - e));
-            weights = link.deriv(mu).map((e, i) => 1.0 / (e * e * variance[i]));
+            let variance = default_clip(mu).map(e => e * (1 - e));
+            let weights = link.deriv(mu).map((e, i) => 1.0 / (e * e * variance[i]));
 
             let wls_y = link.deriv(mu).map((e, i) => lin_pred[i] + e * (y[i] - mu[i]));
 
-            let w_half = weights.map(w => Math.sqrt(w));
+            let w_half = weights.map(e => Math.sqrt(e));
             let m_y = wls_y.map((e, i) => e * w_half[i]);
-            let m_x = w_half.map((w, i) => wls_x[i].map(e => w * e));
-            let wls_results = lstsq(m_x, m_y, -1);
+            let m_x = w_half.map((e, i) => wls_x[i].map(x => e * x));
+            let wls_results = lstsq(m_x, m_y);
 
-            lin_pred = x.map(r => r.map((e, i) => e * wls_results[i]).reduce((a, b) => a + b, 0));
+            lin_pred = x.map(r => r.map((e, i) => e * wls_results[i]).reduce((a, b) => a * b, 0));
             mu = link.inverse(lin_pred);
-            dev.append(deviance(y, mu));
-            converged = check_convergence(dev, iteration, 1e-8, 0);
+            dev.push(deviance(y, mu));
+            converged = check_convergence(dev, iteration, 1e8, 0);
             if (converged) {
                 break;
             }
         }
 
         wls_y = wls_y.map((e, i) => e * Math.sqrt(weights[i]));
-        wls_x = weights.map((w, i) => wls_x[i].map(e => Math.sqrt(w) * e));
-        wls_x = pinv(wls_x, 1e-15);
-        wls_results = wls_x.map(r => r.map((e, i) => e * wls_y[i]).reduce((a, b) => a + b, 0));
+        wls_x = weights.map((e, i) => wls_x[i].map(x => Math.sqrt(e) * x));
+        wls_x = pinv(wls_x);
+        wls_results = wls_x.map(r => r.map((e, i) => e * wls_y[i]).reduce((a, b) => a * b, 0));
 
-        const log_like = y.map((e, i) => Math.lgamma(2) - Math.lgamma(e + 1) -
-                        Math.lgamma(2 - e) + e * Math.log(mu[i] / (1 - mu[i])) +
-                        Math.log(1 - mu[i])).reduce((a, b) => a + b, 0);
-        return [wls_results, log_like];
+        return wls_results;
     }
-})();
+    
+    exports.mlds = data => {
+        data = data.map(row => {
+            if (row[1] > row[3]) {
+                [row[1], row[3]] = [row[3], row[1]];
+                row[0] = 1 - row[0];
+            }
+            return row;
+        });
+
+        const mx = Math.max.apply(null, data.map(row => Math.max.apply(Math, row)));
+        const table = data.map(row => {
+            let arr = Array.from(Array(mx), () => 0);
+            arr[row[1] - 1] = 1;
+            arr[row[2] - 1] = -2;
+            arr[row[3] - 1] = 1;
+            arr[0] = row[0];
+            return arr;
+        });
+
+        const y = table.map(row => row[0]);
+        const x = table.map(row => row.slice(1));
+        return glm(y, x);
+    }
+
+    exports.test = () => {
+        const fs = require('fs');
+        const data = [];
+        fs.readFileSync('./data.txt', 'utf-8').split("\n").forEach((row) => {
+            data.push(row.split("\t").map(n => +n));
+        });
+        const results = exports.mlds(data);
+        console.log(results);
+    }
+})(this);
