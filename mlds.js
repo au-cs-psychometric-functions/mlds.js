@@ -3,7 +3,20 @@
 
     const inf_clip = p => p.map(e => Math.max(Number.EPSILON, Math.min(Number.POSITIVE_INFINITY, e)));
     
-    const transpose = a => a[0].map((x, i) => a.map(x => a[i]))
+    const transpose = a => {
+        const m = a.length;
+        const n = a[0].length;
+        let at = [];
+        for (let i = 0; i < n; i++) {
+            at.push(Array.from(Array(m), () => 0.0));
+        }
+        for (let i = 0; i < m; i++) {
+            for (let j = 0; j < n; j++) {
+                at[j][i] = a[i][j];
+            }
+        }
+        return at;
+    }
 
     const pythag = (a, b) => {
         const abs_a = Math.abs(a)
@@ -199,7 +212,9 @@
     
     const lstsq = (a, b) => {
         at = transpose(a);
+        console.log(at[0][0]);
         ata = at.map(x => at.map(y => x.map((e, i) => e * y[i]).reduce((a, b) => a + b, 0)));
+        console.log(ata);
         atb = at.map(x => x.map((e, i) => e * b[i]).reduce((a, b) => a + b, 0));
         return rref(ata.map((e, i) => e + atb[i])).map(e => e[e.length - 1]);
     }
