@@ -141,11 +141,11 @@
     
     const erf = x => {
         const z = Math.abs(x)
-        const t = 1. / (1. + 0.5 * z)
-        const r = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (.37409196 +
-            t * (.09678418 + t * (-.18628806 + t * (.27886807 +
-            t * (-1.13520398 + t * (1.48851587 + t * (-.82215223 +
-            t * .17087277)))))))))
+        const t = 1.0 / (1.0 + 0.5 * z)
+        const r = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (0.37409196 +
+            t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 +
+            t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 +
+            t * 0.17087277)))))))))
         if (x >= 0.0) {
             return r;
         } else {
@@ -481,6 +481,7 @@
         const link = probit();
 
         let wls_x = x;
+        // let wls_x = x.map(r => r.slice());
         let wls_y = y;
         let weights = [];
 
@@ -502,14 +503,14 @@
             weights = link.deriv(mu).map((e, i) => 1.0 / (e * e * variance[i]));
 
             wls_y = link.deriv(mu).map((e, i) => lin_pred[i] + e * (y[i] - mu[i]));
-            console.log(wls_y);
 
             let w_half = weights.map(e => Math.sqrt(e));
             let m_y = wls_y.map((e, i) => e * w_half[i]);
             let m_x = w_half.map((e, i) => wls_x[i].map(x => e * x));
             let wls_results = lstsq(m_x, m_y);
 
-            lin_pred = x.map(r => r.map((e, i) => e * wls_results[i]).reduce((a, b) => a * b, 0));
+            lin_pred = x.map(r => r.map((e, i) => e * wls_results[i]).reduce((a, b) => a + b, 0));
+            print(lin_pred)
             mu = link.inverse(lin_pred);
             dev.push(deviance(y, mu));
             converged = check_convergence(dev, iteration, 1e-8, 0);
@@ -524,7 +525,7 @@
         wls_x = weights.map((e, i) => wls_x[i].map(x => Math.sqrt(e) * x));
         wls_x = pinv(wls_x);
         wls_results = wls_x.map(r => r.map((e, i) => e * wls_y[i]).reduce((a, b) => a * b, 0));
-
+        // print(wls_results)
         return wls_results;
     }
     
