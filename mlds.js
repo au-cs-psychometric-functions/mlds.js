@@ -24,7 +24,11 @@
         if (abs_a > abs_b) {
             return abs_a * Math.sqrt(1.0 + Math.pow(abs_b / abs_a, 2));
         } else {
-            return abs_b * Math.sqrt(1.0 + Math.pow(abs_a / abs_b, 2));
+            if (abs_b === 0.0) {
+                return 0.0;
+            } else {
+                return abs_b * Math.sqrt(1.0 + Math.pow(abs_a / abs_b, 2));
+            }
         }
     }
 
@@ -360,7 +364,7 @@
             u[i][i] += 1.0;
         }
 
-        const eps = Number.EPSILON * x
+        const eps = Number.EPSILON * x;
         let test_f = false;
         for (let k = n - 1; k >= 0; k--) {
             for (let iteration = 0; iteration < itmax; iteration++) {
@@ -481,7 +485,6 @@
         const link = probit();
 
         let wls_x = x;
-        // let wls_x = x.map(r => r.slice());
         let wls_y = y;
         let weights = [];
 
@@ -510,19 +513,17 @@
             let wls_results = lstsq(m_x, m_y);
 
             lin_pred = x.map(r => r.map((e, i) => e * wls_results[i]).reduce((a, b) => a + b, 0));
-            print(lin_pred)
             mu = link.inverse(lin_pred);
             dev.push(deviance(y, mu));
             converged = check_convergence(dev, iteration, 1e-8, 0);
             if (converged) {
-                print('Converged');
-                print(iteration + '');
                 break;
             }
         }
 
         wls_y = wls_y.map((e, i) => e * Math.sqrt(weights[i]));
         wls_x = weights.map((e, i) => wls_x[i].map(x => Math.sqrt(e) * x));
+        // print(wls_x[0])
         wls_x = pinv(wls_x);
         wls_results = wls_x.map(r => r.map((e, i) => e * wls_y[i]).reduce((a, b) => a * b, 0));
         // print(wls_results)
