@@ -309,7 +309,7 @@
                 x = y;
             }
         }
-        
+
         for (let i = n - 1; i >= 0; i--) {
             if (g !== 0.0) {
                 h = g * u[i][i + 1];
@@ -334,8 +334,8 @@
             g = e[i];
             l = i;
         }
-    
-        for (let i = n; i >= 0; i--) {
+
+        for (let i = n - 1; i >= 0; i--) {
             l = i + 1;
             g = q[i];
             for (let j = l; j < n; j++) {
