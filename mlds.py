@@ -401,7 +401,7 @@ def svd(a):
             e[l] = 0.0
             e[k] = f
             q[k] = x
-            
+
     vt = transpose(v)
     return u, q, vt
 
@@ -414,6 +414,7 @@ def pinv(a):
     s = [[ut[m][n] * s[m] for n in range(len(ut[m]))] for m in range(len(ut))]
     st = transpose(s)
     res = [[sum([a * b for a, b in zip(v[vm], st[stm])]) for stm in range(len(st))] for vm in range(len(v))]
+    print(res[0])
     return res
 
 def glm(y, x):

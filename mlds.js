@@ -228,148 +228,143 @@
     }
 
     const svd = a => {
-        const tol = 1e-64 / Number.EPSILON;
-        const itmax = 50;
+        let eps = Number.EPSILON;
+        const tol = 1e-64 / eps;
+      
         const m = a.length;
         const n = a[0].length;
-
+      
+        if (m < n) {
+          throw new Error('m < n');
+        }
+      
         let u = a;
 
-        if (m < n) {
-            throw Exception('m < n');
-        }
-    
-        let e = Array.from(Array(n), () => 0.0);
-        let q = Array.from(Array(n), () => 0.0);
-        let v = e.map(() => Array.from(Array(n), () => 0.0));
-    
-        let g = 0.0;
-        let x = 0.0;
+        let e = Array.from(Array(n), () => 0);
+        let q = Array.from(Array(n), () => 0);
+        let v = Array.from(Array(n), () => Array.from(Array(n), () => 0));
 
-        for (let i = 0; i < n; i++) {
+        let i, j, k, l, l1, c, f, g, h, s, x, y, z;
+      
+        g = 0;
+        x = 0;
+      
+        for (i = 0; i < n; i++) {
             e[i] = g;
-            s = 0.0;
+            s = 0;
             l = i + 1;
-            for (let j = i; j < m; j++) {
-                s += u[j][i] * u[j][i];
+            for (j = i; j < m; j++) {
+                s += Math.pow(u[j][i], 2);
             }
-            if (s <= tol) {
-                g = 0.0;
+            if (s < tol) {
+                g = 0;
             } else {
                 f = u[i][i];
-                if (f < 0.0) {
-                    g = Math.sqrt(s);
-                } else {
-                    g = -Math.sqrt(s);
-                }
+                g = f < 0 ? Math.sqrt(s) : -Math.sqrt(s);
                 h = f * g - s;
                 u[i][i] = f - g;
-                for (let j = l; j < n; j++) {
-                    s = 0.0;
-                    for (let k = i; k < m; k++) {
+                for (j = l; j < n; j++) {
+                    s = 0;
+                    for (k = i; k < m; k++) {
                         s += u[k][i] * u[k][j];
                     }
                     f = s / h;
-                    for (let k = i; k < m; k++) {
+                    for (k = i; k < m; k++) {
                         u[k][j] = u[k][j] + f * u[k][i];
                     }
                 }
             }
             q[i] = g;
-            s = 0.0;
-            for (let j = l; j < n; j++) {
-                s = s + u[i][j] * u[i][j];
+            s = 0;
+            for (j = l; j < n; j++) {
+                s += Math.pow(u[i][j], 2);
             }
-            if (s <= tol) {
-                g = 0.0;
+            if (s < tol) {
+                g = 0;
             } else {
-                f = u[i][i + 1]
-                if (f < 0.0) {
-                    g = Math.sqrt(s);
-                } else {
-                    g = -Math.sqrt(s);
-                }
+                f = u[i][i + 1];
+                g = f < 0 ? Math.sqrt(s) : -Math.sqrt(s);
                 h = f * g - s;
-                u[i][i+1] = f - g;
-                for (let j = l; j < n; j++) {
+                u[i][i + 1] = f - g;
+                for (j = l; j < n; j++) {
                     e[j] = u[i][j] / h;
                 }
-                for (let j = l; j < m; j++) {
-                    s = 0.0;
-                    for (let k = l; k < n; k++) {
-                        s = s + u[j][k] * u[i][k];
+                for (j = l; j < m; j++) {
+                    s = 0;
+                    for (k = l; k < n; k++) {
+                        s += u[j][k] * u[i][k];
                     }
-                    for (let k = l; k < n; k++) {
+                    for (k = l; k < n; k++) {
                         u[j][k] = u[j][k] + s * e[k];
                     }
                 }
             }
-            let y = Math.abs(q[i]) + Math.abs(e[i]);
+            y = Math.abs(q[i]) + Math.abs(e[i]);
             if (y > x) {
                 x = y;
             }
         }
-
-        for (let i = n - 1; i >= 0; i--) {
-            if (g !== 0.0) {
-                h = g * u[i][i + 1];
-                for (let j = l; j < n; j++) {
+       
+        for (i = n - 1; i >= 0; i--) {
+            if (g !== 0) {
+                h = u[i][i + 1] * g;
+                for (j = l; j < n; j++) {
                     v[j][i] = u[i][j] / h;
                 }
-                for (let j = l; j < n; j++) {
-                    s = 0.0;
-                    for (let k = l; k < n; k++) {
+                for (j = l; j < n; j++) {
+                    s = 0;
+                    for (k = l; k < n; k++) {
                         s += u[i][k] * v[k][j];
                     }
-                    for (let k = l; k < n; k++) {
-                        v[k][j] += s * v[k][i];
+                    for (k = l; k < n; k++) {
+                        v[k][j] = v[k][j] + s * v[k][i];
                     }
                 }
             }
-            for (let j = l; j < n; j++) {
-                v[i][j] = 0.0;
-                v[j][i] = 0.0;
+            for (j = l; j < n; j++) {
+                v[i][j] = 0;
+                v[j][i] = 0;
             }
-            v[i][i] = 1.0;
+            v[i][i] = 1;
             g = e[i];
             l = i;
         }
 
-        for (let i = n - 1; i >= 0; i--) {
+        for (i = n - 1; i >= 0; i--) {
             l = i + 1;
             g = q[i];
-            for (let j = l; j < n; j++) {
-                u[i][j] = 0.0;
+            for (j = l; j < n; j++) {
+                u[i][j] = 0;
             }
-            if (g != 0.0) {
+            if (g !== 0) {
                 h = u[i][i] * g;
-                for (let j = l; j < n; j++) {
-                    s = 0.0;
-                    for (let k = l; k < m; k++) {
+                for (j = l; j < n; j++) {
+                    s = 0;
+                    for (k = l; k < m; k++) {
                         s += u[k][i] * u[k][j];
                     }
                     f = s / h;
-                    for (let k = i; k < m; k++) {
-                        u[k][j] += f * u[k][i];
+                    for (k = i; k < m; k++) {
+                        u[k][j] = u[k][j] + f * u[k][i];
                     }
                 }
-                for (let j = i; j < m; j++) {
+                for (j = i; j < m; j++) {
                     u[j][i] = u[j][i] / g;
                 }
             } else {
-                for (let j = i; j < m; j++) {
-                    u[j][i] = 0.0;
+                for (j = i; j < m; j++) {
+                    u[j][i] = 0;
                 }
             }
-            u[i][i] += 1.0;
+            u[i][i] = u[i][i] + 1;
         }
-
-        const eps = Number.EPSILON * x;
-        let test_f = false;
-        for (let k = n - 1; k >= 0; k--) {
-            for (let iteration = 0; iteration < itmax; iteration++) {
-                for (let l = k; k >= 0; k--) {
-                    test_f = false;
+      
+        eps = eps * x;
+        let test_f;
+        for (k = n - 1; k >= 0; k--) {
+            for (let iteration = 0; iteration < 50; iteration++) {
+                test_f = false;
+                for (l = k; l >= 0; l--) {
                     if (Math.abs(e[l]) <= eps) {
                         test_f = true;
                         break;
@@ -379,87 +374,80 @@
                     }
                 }
                 if (!test_f) {
-                    c = 0.0;
-                    s = 1.0;
+                    c = 0;
+                    s = 1;
                     l1 = l - 1;
-                    for (let i = l; i < k + 1; i++) {
+                    for (i = l; i < k + 1; i++) {
                         f = s * e[i];
                         e[i] = c * e[i];
                         if (Math.abs(f) <= eps) {
                             break;
                         }
                         g = q[i];
-                        h = pythag(f, g);
-                        q[i] = h;
+                        q[i] = Math.sqrt(f * f + g * g);
+                        h = q[i];
                         c = g / h;
                         s = -f / h;
-                        for (let j = 0; j < m; j++) {
+                        for (j = 0; j < m; j++) {
                             y = u[j][l1];
                             z = u[j][i];
-                            u[j][l1] = y * c + z * s;
-                            u[j][i] = -y * s + z * c;
+                            u[j][l1] = y * c + (z * s);
+                            u[j][i] = -y * s + (z * c);
                         }
                     }
                 }
                 z = q[k];
                 if (l === k) {
-                    if (z < 0.0) {
+                    if (z < 0) {
                         q[k] = -z;
-                        for (let j = 0; j < n; j++) {
+                        for (j = 0; j < n; j++) {
                             v[j][k] = -v[j][k];
                         }
                     }
                     break;
-                }
-                if (iteration >= itmax - 1) {
-                    break;
-                }
+                }        
                 x = q[l];
                 y = q[k - 1];
                 g = e[k - 1];
                 h = e[k];
-                f = ((y - z) * (y + z) + (g - h) * (g + h)) / (2.0 * h * y);
-                g = pythag(f, 1.0);
-                if (f < 0) {
-                    f = ((x - z) * (x + z) + h * (y / (f - g) - h)) / x;
-                } else {
-                    f = ((x - z) * (x + z) + h * (y / (f + g) - h)) / x;
-                }
-                c = 1.0;
-                s = 1.0;
-                for (let i = l + 1; i < k + 1; i++) {
+                f = ((y - z) * (y + z) + (g - h) * (g + h)) / (2 * h * y);
+                g = Math.sqrt(f * f + 1);
+                f = ((x - z) * (x + z) + h * (y / (f < 0 ? (f - g) : (f + g)) - h)) / x;
+                c = 1;
+                s = 1;
+                for (i = l + 1; i < k + 1; i++) {
                     g = e[i];
                     y = q[i];
                     h = s * g;
                     g = c * g;
-                    z = pythag(f, h);
-                    e[i-1] = z;
+                    z = Math.sqrt(f * f + h * h);
+                    e[i - 1] = z;
                     c = f / z;
                     s = h / z;
                     f = x * c + g * s;
                     g = -x * s + g * c;
                     h = y * s;
                     y = y * c;
-                    for (let j = 0; j < n; j++) {
+                    for (j = 0; j < n; j++) {
                         x = v[j][i - 1];
                         z = v[j][i];
-                        v[j][i-1] = x * c + z * s;
+                        v[j][i - 1] = x * c + z * s;
                         v[j][i] = -x * s + z * c;
                     }
-                    z = pythag(f, h);
-                    q[i-1] = z;
+                    z = Math.sqrt(f * f + h * h);
+                    q[i - 1] = z;
                     c = f / z;
                     s = h / z;
                     f = c * g + s * y;
                     x = -s * g + c * y;
-                    for (let j = 0; j < m; j++) {
+                    for (j = 0; j < m; j++) {
                         y = u[j][i - 1];
                         z = u[j][i];
-                        u[j][i-1] = y * c + z * s;
+                        u[j][i - 1] = y * c + z * s;
                         u[j][i] = -y * s + z * c;
                     }
                 }
-                e[l] = 0.0;
+                e[l] = 0;
                 e[k] = f;
                 q[k] = x;
             }
@@ -467,17 +455,17 @@
 
         vt = transpose(v);
         return [u, q, vt];
-    }
+      }
 
     const pinv = a => {
         let [u, s, vt] = svd(a);
-        const cutoff = 1e-15 * Math.max(s);
+        const cutoff = 1e-15 * Math.max.apply(null, s);
         s = s.map(e => e > cutoff ? 1 / e : 0);
         let ut = transpose(u);
         let v = transpose(vt);
         s = ut.map((m, i) => m.map(n => n * s[i]));
         let st = transpose(s);
-        res = v.map(vm => st.map(stm => vm.map((e, i) => e * stm[i]).reduce((a, b) => a * b, 0)));
+        res = v.map(vm => st.map(stm => vm.map((e, i) => e * stm[i]).reduce((a, b) => a + b, 0)));
         return res;
     }
 
@@ -523,10 +511,8 @@
 
         wls_y = wls_y.map((e, i) => e * Math.sqrt(weights[i]));
         wls_x = weights.map((e, i) => wls_x[i].map(x => Math.sqrt(e) * x));
-        // print(wls_x[0])
         wls_x = pinv(wls_x);
-        wls_results = wls_x.map(r => r.map((e, i) => e * wls_y[i]).reduce((a, b) => a * b, 0));
-        // print(wls_results)
+        wls_results = wls_x.map(r => r.map((e, i) => e * wls_y[i]).reduce((a, b) => a + b, 0));
         return wls_results;
     }
     
