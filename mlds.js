@@ -523,7 +523,7 @@
                 row[0] = 1 - row[0];
             }
             return row;
-        });
+        }).filter(e => e.length == 4);
 
         const mx = Math.max.apply(null, data.map(row => Math.max.apply(Math, row)));
         const table = data.map(row => {
