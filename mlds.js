@@ -18,20 +18,6 @@
         return at;
     }
 
-    const pythag = (a, b) => {
-        const abs_a = Math.abs(a)
-        const abs_b = Math.abs(b)
-        if (abs_a > abs_b) {
-            return abs_a * Math.sqrt(1.0 + Math.pow(abs_b / abs_a, 2));
-        } else {
-            if (abs_b === 0.0) {
-                return 0.0;
-            } else {
-                return abs_b * Math.sqrt(1.0 + Math.pow(abs_a / abs_b, 2));
-            }
-        }
-    }
-
     const s2pi = 2.50662827463100050242E0;
 
     const P0 = [
@@ -179,7 +165,7 @@
 
     const check_convergence = (criterion, iteration, atol, rtol) => allclose(criterion[iteration], criterion[iteration + 1], atol, rtol);
 
-    rref = a => {
+    const rref = a => {
         let lead = 0;
         const m = a.length;
         const n = a[0].length;
@@ -548,9 +534,5 @@
         });
         const results = exports.mlds(data);
         console.log(results);
-    }
-
-    const print = str => {
-        console.log(str);
     }
 })(this);
