@@ -524,7 +524,7 @@ const mlds = (function() {
     
             const y = table.map(row => row[0]);
             const x = table.map(row => row.slice(1));
-            return glm(y, x);
+            return [0, ...glm(y, x)];
         }
     }
 })();
