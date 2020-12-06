@@ -1,4 +1,4 @@
-(function(exports) {
+const mlds = (function() {
     const default_clip = p => p.map(e => Math.max(Number.EPSILON, Math.min(1 - Number.EPSILON, e)))
 
     const inf_clip = p => p.map(e => Math.max(Number.EPSILON, Math.min(Number.POSITIVE_INFINITY, e)));
@@ -502,37 +502,29 @@
         return wls_results;
     }
     
-    exports.mlds = data => {
-        data = data.map(row => {
-            if (row[1] > row[3]) {
-                [row[1], row[3]] = [row[3], row[1]];
-                row[0] = 1 - row[0];
-            }
-            return row;
-        }).filter(e => e.length == 4);
-
-        const mx = Math.max.apply(null, data.map(row => Math.max.apply(Math, row)));
-        const table = data.map(row => {
-            let arr = Array.from(Array(mx), () => 0);
-            arr[row[1] - 1] = 1;
-            arr[row[2] - 1] = -2;
-            arr[row[3] - 1] = 1;
-            arr[0] = row[0];
-            return arr;
-        });
-
-        const y = table.map(row => row[0]);
-        const x = table.map(row => row.slice(1));
-        return glm(y, x);
+    return {
+        mlds: data => {
+            data = data.map(row => {
+                if (row[1] > row[3]) {
+                    [row[1], row[3]] = [row[3], row[1]];
+                    row[0] = 1 - row[0];
+                }
+                return row;
+            }).filter(e => e.length == 4);
+    
+            const mx = Math.max.apply(null, data.map(row => Math.max.apply(Math, row)));
+            const table = data.map(row => {
+                let arr = Array.from(Array(mx), () => 0);
+                arr[row[1] - 1] = 1;
+                arr[row[2] - 1] = -2;
+                arr[row[3] - 1] = 1;
+                arr[0] = row[0];
+                return arr;
+            });
+    
+            const y = table.map(row => row[0]);
+            const x = table.map(row => row.slice(1));
+            return glm(y, x);
+        }
     }
-
-    exports.test = () => {
-        const fs = require('fs');
-        const data = [];
-        fs.readFileSync('./data.txt', 'utf-8').split("\n").forEach((row) => {
-            data.push(row.split("\t").map(n => +n));
-        });
-        const results = exports.mlds(data);
-        console.log(results);
-    }
-})(this);
+})();
