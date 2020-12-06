@@ -479,7 +479,7 @@ class Summary():
 
 def mlds(filename):
     data = []
-    with open('data.txt', 'r') as f:
+    with open(filename, 'r') as f:
         for line in f.readlines():
             data.append(list(map(int, line.strip().split('\t'))))
 
@@ -508,4 +508,4 @@ def mlds(filename):
     summary.print()
 
 if __name__ == '__main__':
-    mlds('table.txt')
+    mlds('data.txt')
