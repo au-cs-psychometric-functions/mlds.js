@@ -1,6 +1,6 @@
 # mlds.js
 
-Implementation of [Maximum Likelihood Difference Scaling]() in python and javascript.
+Implementation of [Maximum Likelihood Difference Scaling](https://cran.r-project.org/web/packages/MLDS/vignettes/MLDS.pdf) in python and javascript.
 
 ## Examples
 
